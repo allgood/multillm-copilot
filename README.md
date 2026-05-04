@@ -19,7 +19,9 @@ Integrate [OpenCode Go](https://opencode.ai/go) models into GitHub Copilot Chat 
 
 ### Token Usage Indicator
 
-Once installed, when using a model provided by OpenCode Go, the status bar will display the current context usage and cumulative input/output token counts. For DeepSeek and models that support returning cache usage via the OpenAI-compatible format, the tooltip will also show the **cumulative input cache hit count** and **cache hit rate**.
+Once installed, the status bar shows the current context usage and cumulative input/output token counts for OpenCode Go models. Models that support cache metrics via the OpenAI-compatible format (e.g., DeepSeek) also display the **cumulative cache hit count** and **cache hit rate** in the tooltip.
+
+> Note: Whether non-DeepSeek models display cache data depends on whether the model API returns cache metrics in OpenAI-compatible format. This does not indicate whether the model supports caching — caching support depends on OpenCode Go.
 
 ![token_counter](/assets/screenshots/token_counter.png)
 
@@ -50,7 +52,7 @@ Available in `settings.json`:
 | `opencodego.recentCommitsCount` | `10` | Number of recent commits to analyze for style reference when generating commit messages. Set to 0 to disable. |
 
 > All requests use `temperature: 0` for deterministic output.  
-> DeepSeek Thinking variants expose a **Thinking Effort** picker in the model selector with levels `high` and `max` (default: `max`).
+> All models feature a **Reasoning Effort** selector in the model picker. Switchable models offer `Non-thinking`/`Thinking` or `Non-thinking`/`High`/`Maximum` options (e.g., DeepSeek). Models with always-on reasoning show only effort levels or `Thinking`.
 
 ### Build
 
@@ -75,13 +77,15 @@ MIT License. This project references code from [oai-compatible-copilot](https://
 ### 使用
 
 1. **设置 API Key**：`Ctrl+Shift+P` → `OpenCodeGo: Set OpenCode Go API Key`
-2. **显示模型**：在模型选择器中点击设置图标 ⚙️ → **语言模型** 面板 → 将需要的模型显示
-3. **选择模型**：在 Copilot Chat 底部模型选择器中选 "OpenCode Go" 下的模型
+2. **显示模型**：在模型选择器中点击设置图标 ⚙️ → **语言模型** 面板 → 勾选需要使用的模型
+3. **选择模型**：在 Copilot Chat 底部模型选择器中选择 "OpenCode Go" 下的模型
 4. **开始对话**
 
 ### Token 用量指示器
 
-安装后，使用 OpenCode Go 所提供的模型时，底部将会显示当前上下文用量与会话累计输入/输出 Token 量，同时 DeepSeek 与支持通过 OpenAI 格式返回缓存用量的模型还将显示**累计输入缓存命中量**与**缓存命中率**。
+安装后，使用 OpenCode Go 提供的模型时，状态栏会显示当前上下文用量与累计输入/输出 Token 量。DeepSeek 等支持通过 OpenAI 格式返回缓存用量的模型还会显示**累计缓存命中量**与**缓存命中率**。
+
+> 提示: 非 DeepSeek 的模型是否显示缓存数据取决于模型接口是否通过 OpenAI 格式返回缓存数据，这并不代表此模型是否支持缓存。模型对于缓存的支持情况取决于 OpenCode Go。
 
 ![token_counter](/assets/screenshots/token_counter.png)
 
@@ -112,7 +116,7 @@ MIT License. This project references code from [oai-compatible-copilot](https://
 | `opencodego.recentCommitsCount` | `10` | 生成提交消息时参考的近期提交数量，用于学习仓库提交风格。设为 0 可禁用。 |
 
 > 所有请求使用 `temperature: 0` 以确保输出确定性。  
-> DeepSeek Thinking 变体在模型选择器中提供 **思考深度 (Thinking Effort)** 选项，可选 `high`、`max`（默认 `max`）。
+> 所有模型均配备**推理强度选择器**。支持切换的模型提供`禁用思考`/`思考`或`非思考`/`高`/`极高`选项（如 DeepSeek）。推理始终启用（不支持切换思考模式）的模型仅显示强度选项或`思考`。
 
 ### 编译
 
