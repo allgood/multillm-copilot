@@ -60,14 +60,6 @@ Available in `settings.json`:
 > 3. Select the desired **Thinking Effort** level
 >
 > The current effort level is shown next to the model name in the picker button (e.g., "DeepSeek V4 Pro · High"). Directly clicking the label text is not supported — use the gear icon submenu instead.
->
-> You can also set a permanent default via VS Code's language model configuration file (`.vscode/languageModelConfiguration.json`):
-> ```json
-> {
->   "opencodego.deepseek-v4-pro.reasoningEffort": "max",
->   "opencodego.deepseek-v4-flash.reasoningEffort": "disabled"
-> }
-> ```
 
 ### Build
 
@@ -139,14 +131,6 @@ MIT License. This project references code from [oai-compatible-copilot](https://
 > 3. 选择需要的**推理强度**级别
 >
 > 当前强度级别会显示在模型选择器按钮中（如 "DeepSeek V4 Pro · 极高"），但该文本仅为标签，无法直接点击修改，请使用齿轮图标子菜单。
->
-> 也可以通过 VS Code 的语言模型配置文件（`.vscode/languageModelConfiguration.json`）设置永久默认值：
-> ```json
-> {
->   "opencodego.deepseek-v4-pro.reasoningEffort": "max",
->   "opencodego.deepseek-v4-flash.reasoningEffort": "disabled"
-> }
-> ```
 
 ### 编译
 
