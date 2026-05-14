@@ -35,7 +35,7 @@ Available in `settings.json`:
 
 ```json
 {
-  "opencodego.commitLanguage": "English",
+  "opencodego.commitLanguage": "auto",
   "opencodego.commitModel": "deepseek-v4-flash",
   "opencodego.commitMessagePrompt": "",
   "opencodego.requestTimeout": 600000,
@@ -45,7 +45,7 @@ Available in `settings.json`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `opencodego.commitLanguage` | `English` | Language for Git commit messages |
+| `opencodego.commitLanguage` | `auto` | Language for Git commit messages. When set to `auto`, the language is detected from recent commit history (defaults to English if no history exists). |
 | `opencodego.commitModel` | `deepseek-v4-flash` | Model ID used for commit generation |
 | `opencodego.commitMessagePrompt` | `""` | Custom system prompt for commit message generation |
 | `opencodego.requestTimeout` | `600000` | Maximum time (ms) for a single API request. Default is 600000 (10 minutes). Increase if long responses time out. |
@@ -106,7 +106,7 @@ MIT License. This project references code from [oai-compatible-copilot](https://
 
 ```json
 {
-  "opencodego.commitLanguage": "Chinese (Simplified)",
+  "opencodego.commitLanguage": "auto",
   "opencodego.commitModel": "deepseek-v4-flash",
   "opencodego.commitMessagePrompt": "",
   "opencodego.requestTimeout": 600000,
@@ -116,7 +116,7 @@ MIT License. This project references code from [oai-compatible-copilot](https://
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `opencodego.commitLanguage` | `English` | 提交消息语言 |
+| `opencodego.commitLanguage` | `auto` | 提交消息语言。设为 `auto` 时将根据历史提交自动检测语言（无历史时默认英语）。 |
 | `opencodego.commitModel` | `deepseek-v4-flash` | 用于生成提交消息的模型 |
 | `opencodego.commitMessagePrompt` | `""` | 生成提交消息的自定义系统提示词 |
 | `opencodego.requestTimeout` | `600000` | 单个 API 请求的最大等待时间（毫秒）。默认 600000（10 分钟）。生成长内容超时时可增大此值。 |

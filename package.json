@@ -92,8 +92,9 @@
 			"properties": {
 				"opencodego.commitLanguage": {
 					"type": "string",
-					"default": "English",
+					"default": "auto",
 					"enum": [
+						"auto",
 						"English",
 						"French",
 						"Italian",
@@ -108,6 +109,23 @@
 						"Portuguese (Brazil)",
 						"Turkish",
 						"Polish"
+					],
+					"enumDescriptions": [
+						"%config.commitLanguage.auto.desc%",
+						"%config.commitLanguage.enum.English.desc%",
+						"%config.commitLanguage.enum.French.desc%",
+						"%config.commitLanguage.enum.Italian.desc%",
+						"%config.commitLanguage.enum.German.desc%",
+						"%config.commitLanguage.enum.Spanish.desc%",
+						"%config.commitLanguage.enum.Russian.desc%",
+						"%config.commitLanguage.enum.ChineseSimplified.desc%",
+						"%config.commitLanguage.enum.ChineseTraditional.desc%",
+						"%config.commitLanguage.enum.Japanese.desc%",
+						"%config.commitLanguage.enum.Korean.desc%",
+						"%config.commitLanguage.enum.Czech.desc%",
+						"%config.commitLanguage.enum.PortugueseBrazil.desc%",
+						"%config.commitLanguage.enum.Turkish.desc%",
+						"%config.commitLanguage.enum.Polish.desc%"
 					],
 					"description": "%config.commitLanguage.desc%"
 				},
