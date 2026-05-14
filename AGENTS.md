@@ -237,7 +237,7 @@ generateCommitMsg(secrets, scm?)
   ├── 构建 Prompt:
   │   ├── 系统提示词 (可自定义，强调直接输出不包含解释)
   │   ├── 最近提交风格参考 (git log --format=%s)
-  │   ├── 语言检测: auto 模式时根据历史提交自动检测语言
+  │   ├── 语言检测: auto 模式时告知模型匹配历史 commit 语言风格
   │   ├── 用户当前输入 (SCM InputBox)
   │   └── Git Diff 内容
   ├── 调用 API:
@@ -795,11 +795,8 @@ Anthropic 请求体。包含 `model`, `messages`, `max_tokens`, `system`, `strea
 #### `ensureApiKey(secrets): Promise<string | undefined>`
 确保 API Key 存在。
 
-#### `detectLanguageFromCommits(commits): string`
-从历史 commit 内容中自动检测自然语言。检测顺序：日文（含平假名/片假名）→ 韩文（含谚文音节）→ 简体中文（含 CJK 统一表意文字）→ 默认英语。
-
 #### `performCommitMsgGeneration(secrets, gitDiff, inputBox, repoPath?): Promise<void>`
-核心生成逻辑。构建 prompt（含自定义提示词、最近提交风格、用户输入、diff 内容），支持 `auto` 语言模式自动检测历史 commit 语言，创建 API 实例，流式输出提交消息到 InputBox。
+核心生成逻辑。构建 prompt（含自定义提示词、最近提交风格、用户输入、diff 内容），支持 `auto` 语言模式（由模型根据历史 commit 风格自动推断），创建 API 实例，流式输出提交消息到 InputBox。
 
 #### `abortCommitGeneration(): void`
 中止提交消息生成。

@@ -161,26 +161,6 @@ async function ensureApiKey(secrets: vscode.SecretStorage): Promise<string | und
     return apiKey;
 }
 
-/**
- * Detect the natural language used in commit messages.
- * Examines recent commit subjects to determine the dominant language.
- * Falls back to English when detection is ambiguous.
- */
-function detectLanguageFromCommits(commits: string): string {
-    if (!commits) return "English";
-
-    // Japanese: contains hiragana or katakana
-    if (/[\u3040-\u309F\u30A0-\u30FF]/.test(commits)) return "Japanese";
-
-    // Korean: contains hangul syllables
-    if (/[\uAC00-\uD7AF]/.test(commits)) return "Korean";
-
-    // Chinese: contains CJK unified ideographs (and not matched by above)
-    if (/[\u4E00-\u9FFF]/.test(commits)) return "Chinese (Simplified)";
-
-    return "English";
-}
-
 async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff: string, inputBox: any, repoPath?: string) {
     const startTime = Date.now();
     let modelId: string | undefined;
@@ -191,11 +171,10 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
         const customSystemPrompt = config.get<string>("opencodego.commitMessagePrompt", "");
         let systemPrompt = customSystemPrompt || DEFAULT_PROMPT.system;
 
-        // Fetch recent commits for style reference and language detection
+        // Fetch recent commits for style reference
         const recentCommitsCount = config.get<number>("opencodego.recentCommitsCount", 10);
-        let recentCommits: string | undefined;
         if (recentCommitsCount > 0 && repoPath) {
-            recentCommits = await getRecentCommits(repoPath, recentCommitsCount);
+            const recentCommits = await getRecentCommits(repoPath, recentCommitsCount);
             if (recentCommits) {
                 systemPrompt += DEFAULT_PROMPT.styleReference.replace("{{RECENT_COMMITS}}", recentCommits);
             }
@@ -229,14 +208,10 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
             throw new Error(l10n("Invalid base URL configuration."));
         }
 
-        // Determine commit language: auto mode detects from recent history
+        // Apply language instruction: auto mode lets the model infer from style reference
         const commitLanguage = config.get<string>("opencodego.commitLanguage", "auto");
-        let detectedLanguage = commitLanguage;
-        if (commitLanguage === "auto") {
-            detectedLanguage = recentCommits ? detectLanguageFromCommits(recentCommits) : "English";
-        }
-        if (detectedLanguage !== "auto") {
-            systemPrompt += ` Generate commit message in ${detectedLanguage}.`;
+        if (commitLanguage !== "auto") {
+            systemPrompt += ` Generate commit message in ${commitLanguage}.`;
         }
 
         const messages = [{ role: "user", content: prompt }];
