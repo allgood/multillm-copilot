@@ -34,7 +34,7 @@
 | **工具调用 (Tool Calling)** | 支持 VS Code 的 LanguageModelToolCallPart 机制 |
 | **Token 计数** | 使用 `o200k_base` tiktoken 分词器精确统计 token 用量 |
 | **状态栏** | 实时显示当前会话 token 使用量、累计用量、缓存命中率 |
-| **Git 提交消息生成** | 一键生成 Conventional Commit 格式的 Git 提交消息 |
+| **Git 提交消息生成** | 一键生成 Conventional Commit 格式的 Git 提交消息，支持 `auto` 语言模式自动从历史提交检测语言 |
 | **多仓库支持** | 支持多根工作区 (multi-root) 中多个 Git 仓库的提交消息生成 |
 | **国际化** | 内置简体中文 (zh-cn) 中英文双语界面 |
 | **重试机制** | 可配置的指数退避重试策略，应对网络抖动和限流 (429) |
@@ -235,10 +235,11 @@ generateCommitMsg(secrets, scm?)
   │   ├── 1 个 → 直接生成
   │   └── 多个 → QuickPick 选择
   ├── 构建 Prompt:
-  │   ├── 系统提示词 (可自定义)
+  │   ├── 系统提示词 (可自定义，强调直接输出不包含解释)
   │   ├── 最近提交风格参考
   │   │   ├── 默认: 仅提交标题 (git log --format=%s)
   │   │   └── 可选: 同时包含每次提交的 diff (opencodego.commitIncludeCommitDiff)
+  │   ├── 语言检测: auto 模式时告知模型匹配历史 commit 语言风格
   │   ├── 用户当前输入 (SCM InputBox)
   │   └── Git Diff 内容
   ├── 调用 API:
@@ -776,7 +777,7 @@ Anthropic 请求体。包含 `model`, `messages`, `max_tokens`, `system`, `strea
 全局中止控制器。
 
 #### `const DEFAULT_PROMPT`
-默认提示词模板。包含 `system`（系统提示）、`user`（用户输入模板）、`styleReference`（风格参考模板）。
+默认提示词模板。包含 `system`（系统提示，强调直接输出 commit 信息、不包含任何前言和解释）、`user`（用户输入模板）、`styleReference`（风格参考模板，含语言匹配指令）。
 
 #### `generateCommitMsg(secrets, scm?): Promise<void>`
 入口函数。检测 Git 扩展和仓库，对多仓库场景进行选择，调用 `generateCommitMsgForRepository()`。
@@ -797,7 +798,7 @@ Anthropic 请求体。包含 `model`, `messages`, `max_tokens`, `system`, `strea
 确保 API Key 存在。
 
 #### `performCommitMsgGeneration(secrets, gitDiff, inputBox, repoPath?): Promise<void>`
-核心生成逻辑。构建 prompt（含自定义提示词、最近提交风格、用户输入、diff 内容），创建 API 实例，流式输出提交消息到 InputBox。支持通过配置 `opencodego.commitIncludeCommitDiff` 控制风格参考中是否包含历史提交的实际代码变更（默认关闭）。支持通过配置 `opencodego.commitAttachContextFiles`（默认开启）控制是否将仓库根目录的 `AGENTS.md` 和 `README.md` 内容附加到 prompt 中作为额外上下文。
+核心生成逻辑。构建 prompt（含自定义提示词、最近提交风格、用户输入、diff 内容），支持 `auto` 语言模式（由模型根据历史 commit 风格自动推断），创建 API 实例，流式输出提交消息到 InputBox。支持通过配置 `opencodego.commitIncludeCommitDiff` 控制风格参考中是否包含历史提交的实际代码变更（默认关闭）。支持通过配置 `opencodego.commitAttachContextFiles`（默认开启）控制是否将仓库根目录的 `AGENTS.md` 和 `README.md` 内容附加到 prompt 中作为额外上下文。
 
 #### `abortCommitGeneration(): void`
 中止提交消息生成。
@@ -961,7 +962,51 @@ npm run build
 > 
 > 任何提交中若包含代码变更但未同步更新本文档，视为不合规。
 
-### 6.2 代码风格
+### 6.3 PR 内容规范
+
+> **当用户要求生成 PR (Pull Request) 内容时，必须遵循以下模板风格。**
+
+#### PR Title 格式
+
+使用 Conventional Commit 风格：
+```
+<type>: <brief description>
+```
+
+type 取值：`feat` | `fix` | `refactor` | `docs` | `chore` | `improve` 等。
+
+#### PR Body 模板
+
+```markdown
+### Changes
+
+**1. <功能/改动标题>**
+- <具体变更点 1>
+- <具体变更点 2>
+- <...>
+
+**2. <下一个功能/改动标题>**
+- <具体变更点>
+- <...>
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `<file path>` | <一句话说明改了什么> |
+| `<file path>` | <一句话说明改了什么> |
+```
+
+#### 撰写规范
+
+- Title 首字母小写，用英文撰写
+- Body 使用英文，用 **粗体标题** 组织 major change areas
+- Changes 部分用项目符号列出每个功能点的具体变更，每点以句号结尾
+- Files Changed 表格只列关键文件，说明简洁（不需要行数、路径全称）
+- 不包含"如何测试"、"如何回滚"等运维内容，除非用户特别要求
+- 语气精炼、直接，聚焦"改了什么"而非"为什么改"
+
+### 6.4 代码风格
 
 - 使用 TypeScript 严格模式 (`strict: true`)
 - 遵循 ES2024 标准

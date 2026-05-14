@@ -17,7 +17,7 @@ let commitGenerationAbortController: AbortController | undefined;
 
 const DEFAULT_PROMPT = {
     system:
-        "You are a helpful assistant that generates concise, informative git commit messages based on git diffs.\n\nGuidelines:\n- By default, use conventional commit format: <type>(<scope>): <description>\n- If reference commits are provided below, match their style instead\n- Keep the subject line under 72 characters\n- Use the imperative mood (\"add\" not \"added\" / \"adds\")\n- Skip any preamble, explanations, or backticks — output only the commit message\n- If the diff is large, focus on the most important changes",
+        "You are a helpful assistant that generates concise, informative git commit messages based on git diffs.\n\nGuidelines:\n- By default, use conventional commit format: <type>(<scope>): <description>\n- If reference commits are provided below, match their style and language instead\n- Keep the subject line under 72 characters\n- Use the imperative mood (\"add\" not \"added\" / \"adds\")\n- CRITICAL: Output ONLY the commit message itself — no preamble, no introduction, no explanations, no backticks\n- If the diff is large, focus on the most important changes",
     user: "Notes from developer (ignore if not relevant): {{USER_CURRENT_INPUT}}",
     styleReference: "\n\nRecent commit messages in this repository (match their style):\n{{RECENT_COMMITS}}",
 };
@@ -235,9 +235,11 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
             throw new Error(l10n("Invalid base URL configuration."));
         }
 
-        const commitLanguage = config.get<string>("opencodego.commitLanguage", "English");
-
-        systemPrompt += ` Generate commit message in ${commitLanguage}.`;
+        // Apply language instruction: auto mode lets the model infer from style reference
+        const commitLanguage = config.get<string>("opencodego.commitLanguage", "auto");
+        if (commitLanguage !== "auto") {
+            systemPrompt += ` Generate commit message in ${commitLanguage}.`;
+        }
 
         const messages = [{ role: "user", content: prompt }];
 
