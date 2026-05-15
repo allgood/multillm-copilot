@@ -29,5 +29,16 @@
 	"config.requestTimeout.desc": "Maximum time (in milliseconds) for a single request. Default: 600000 (10 minutes). Increase if you encounter timeout errors with long responses.",
 	"config.recentCommitsCount.desc": "Number of recent commits to analyze for style reference when generating commit messages. Set to 0 to disable. Default: 10.",
 	"config.commitIncludeCommitDiff.desc": "When enabled, include the actual code changes (diff) of recent commits in the style reference, helping the model generate messages that better match the project's commit style. Default: false.",
-	"config.commitAttachContextFiles.desc": "When enabled, attach the content of AGENTS.md and README.md from the repository root as additional context for commit message generation, helping the model better understand the project. Default: true."
+	"config.commitAttachContextFiles.desc": "When enabled, attach the content of AGENTS.md and README.md from the repository root as additional context for commit message generation, helping the model better understand the project. Default: true.",
+
+	"config.modelPreset.desc": "Current model preset ID. Use the 'Set Model Preset' command to select a preset. Set to 'custom' to use manual values from 'opencodego.temperature' and 'opencodego.top_p'.",
+	"config.temperature.desc": "Model temperature (0.0 - 2.0). Paired with 'opencodego.top_p'. Only used when 'opencodego.modelPreset' is set to 'custom'.",
+	"config.top_p.desc": "Model top_p (0.0 - 1.0). Paired with 'opencodego.temperature'. Only used when 'opencodego.modelPreset' is set to 'custom'.",
+	"config.modelPresets.desc": "Model presets for quick selection via command palette. Each preset includes temperature and top_p. You can customize the presets.",
+	"config.modelPreset.id.desc": "Preset identifier (must match the value in modelPreset setting).",
+	"config.modelPreset.label.desc": "Display name of the preset.",
+	"config.modelPreset.temperature.desc": "Temperature value (0.0 - 2.0).",
+	"config.modelPreset.top_p.desc": "top_p value (0.0 - 1.0).",
+
+	"command.setModelPreset": "Set Model Preset (temp, top_p)"
 }

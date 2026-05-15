@@ -61,6 +61,11 @@
 				"title": "%command.abortCommit%",
 				"category": "%commandCategory%",
 				"icon": "$(debug-stop)"
+			},
+			{
+				"command": "opencodego.setModelPreset",
+				"category": "%commandCategory%",
+				"title": "%command.setModelPreset%"
 			}
 		],
 		"menus": {
@@ -161,6 +166,45 @@
 					"type": "boolean",
 					"default": true,
 					"description": "%config.commitAttachContextFiles.desc%"
+				},
+				"opencodego.modelPreset": {
+					"type": "string",
+					"default": "custom",
+					"description": "%config.modelPreset.desc%",
+					"editPresentation": "singlelineText"
+				},
+				"opencodego.temperature": {
+					"type": "number",
+					"default": null,
+					"minimum": 0,
+					"maximum": 2,
+					"description": "%config.temperature.desc%"
+				},
+				"opencodego.top_p": {
+					"type": "number",
+					"default": null,
+					"minimum": 0,
+					"maximum": 1,
+					"description": "%config.top_p.desc%"
+				},
+				"opencodego.modelPresets": {
+					"type": "array",
+					"default": [
+						{ "id": "precise", "label": "🎯 Precise", "temperature": 0.0, "top_p": 1.0 },
+						{ "id": "balanced", "label": "⚖️ Balanced", "temperature": 0.7, "top_p": 0.9 },
+						{ "id": "creative", "label": "🔥 Creative", "temperature": 0.95, "top_p": 0.95 }
+					],
+					"items": {
+						"type": "object",
+						"required": ["id", "label", "temperature", "top_p"],
+						"properties": {
+							"id": { "type": "string", "description": "%config.modelPreset.id.desc%" },
+							"label": { "type": "string", "description": "%config.modelPreset.label.desc%" },
+							"temperature": { "type": "number", "description": "%config.modelPreset.temperature.desc%" },
+							"top_p": { "type": "number", "description": "%config.modelPreset.top_p.desc%" }
+						}
+					},
+					"description": "%config.modelPresets.desc%"
 				}
 			}
 		}
