@@ -155,6 +155,9 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                     const userTopP = config.get<number | null>("opencodego.top_p", null);
                     if (userTopP !== null) {
                         um.top_p = userTopP;
+                    } else {
+                        // Keep top_p undefined so the model uses its default
+                        um.top_p = undefined;
                     }
                 }
             }

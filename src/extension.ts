@@ -63,7 +63,7 @@ export function activate(context: vscode.ExtensionContext) {
             const currentTopP = config.get<number | null>("opencodego.top_p", null);
 
             const currentTempStr = currentTemp !== null ? String(currentTemp) : "—";
-            const currentTopPStr = currentTopP !== null ? String(currentTopP) : "—";
+            const currentTopPStr = currentTopP !== null ? String(currentTopP) : "";
 
             // Build preset QuickPick items with embedded presetId for reliable matching
             interface PresetQuickPickItem extends vscode.QuickPickItem {
@@ -71,7 +71,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             const presetItems: PresetQuickPickItem[] = presets.map((p) => ({
-                label: `${l10n(p.label)}（${p.temperature}）`,
+                label: `${l10n(p.label)} (${p.temperature})`,
                 presetId: p.id,
             }));
 
@@ -79,17 +79,23 @@ export function activate(context: vscode.ExtensionContext) {
                 label: "$(pencil) " + l10n("Custom (manual input temp,top_p)"),
             };
 
+            const statusSuffix = currentTopPStr
+                ? " — " + l10nFormat("Current temp: {0}, top_p: {1}", currentTempStr, currentTopPStr)
+                : " — " + l10nFormat("Current temperature: {0}", currentTempStr);
+
             const items: PresetQuickPickItem[] = [
                 ...presetItems,
                 { label: "", kind: vscode.QuickPickItemKind.Separator },
                 customItem,
                 {
-                    label: l10nFormat("Current temp: {0}, top_p: {1}", currentTempStr, currentTopPStr),
+                    label: currentTopPStr
+                        ? l10nFormat("Current temp: {0}, top_p: {1}", currentTempStr, currentTopPStr)
+                        : l10nFormat("Current temperature: {0}", currentTempStr),
                     kind: vscode.QuickPickItemKind.Separator,
                 },
             ];
 
-            const title = l10n("Set Model Preset") + " — " + l10nFormat("Current temp: {0}, top_p: {1}", currentTempStr, currentTopPStr);
+            const title = l10n("Set Model Preset") + statusSuffix;
 
             const picked = await vscode.window.showQuickPick(items, {
                 title,
@@ -109,7 +115,6 @@ export function activate(context: vscode.ExtensionContext) {
                 if (matchedPreset) {
                     await config.update("opencodego.modelPreset", matchedPreset.id, vscode.ConfigurationTarget.Global);
                     await config.update("opencodego.temperature", matchedPreset.temperature, vscode.ConfigurationTarget.Global);
-                    await config.update("opencodego.top_p", matchedPreset.top_p, vscode.ConfigurationTarget.Global);
                     vscode.window.showInformationMessage(
                         l10nFormat("Set to temperature: {0} ({1})", String(matchedPreset.temperature), l10n(matchedPreset.label))
                     );
@@ -120,7 +125,7 @@ export function activate(context: vscode.ExtensionContext) {
                     ? `${currentTemp},${currentTopP}`
                     : "";
                 const inputValue = await vscode.window.showInputBox({
-                    title: l10n("Enter temperature and top_p"),
+                    title: l10n("Enter temperature (or temp,top_p)"),
                     prompt: l10n("Enter temp,top_p (comma separated), e.g.: 0.7,0.95"),
                     value: currentVal,
                     validateInput: (val: string) => {
