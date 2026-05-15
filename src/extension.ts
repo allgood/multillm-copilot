@@ -71,7 +71,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             const presetItems: PresetQuickPickItem[] = presets.map((p) => ({
-                label: `${l10n(p.label)}（${p.temperature}, ${p.top_p !== undefined ? p.top_p : "—"}）`,
+                label: `${l10n(p.label)}（${p.temperature}）`,
                 presetId: p.id,
             }));
 
@@ -111,7 +111,7 @@ export function activate(context: vscode.ExtensionContext) {
                     await config.update("opencodego.temperature", matchedPreset.temperature, vscode.ConfigurationTarget.Global);
                     await config.update("opencodego.top_p", matchedPreset.top_p, vscode.ConfigurationTarget.Global);
                     vscode.window.showInformationMessage(
-                        l10nFormat("Set to temp: {0}, top_p: {1} ({2})", String(matchedPreset.temperature), String(matchedPreset.top_p), l10n(matchedPreset.label))
+                        l10nFormat("Set to temperature: {0} ({1})", String(matchedPreset.temperature), l10n(matchedPreset.label))
                     );
                 }
             } else {
@@ -124,32 +124,45 @@ export function activate(context: vscode.ExtensionContext) {
                     prompt: l10n("Enter temp,top_p (comma separated), e.g.: 0.7,0.95"),
                     value: currentVal,
                     validateInput: (val: string) => {
-                        const parts = val.split(",");
-                        if (parts.length !== 2) {
-                            return l10n("Please enter two numbers separated by a comma");
+                        const trimmed = val.trim();
+                        if (!trimmed) {
+                            return l10n("Please enter at least temperature value");
+                        }
+                        const parts = trimmed.split(",");
+                        if (parts.length > 2) {
+                            return l10n("Please enter at most two numbers separated by a comma");
                         }
                         const temp = parseFloat(parts[0].trim());
-                        const topP = parseFloat(parts[1].trim());
                         if (isNaN(temp) || temp < 0 || temp > 2) {
                             return l10n("Temperature must be between 0.0 and 2.0");
                         }
-                        if (isNaN(topP) || topP < 0 || topP > 1) {
-                            return l10n("top_p must be between 0.0 and 1.0");
+                        if (parts.length === 2) {
+                            const topP = parseFloat(parts[1].trim());
+                            if (isNaN(topP) || topP < 0 || topP > 1) {
+                                return l10n("top_p must be between 0.0 and 1.0");
+                            }
                         }
                         return null;
                     },
                     ignoreFocusOut: true,
                 });
                 if (inputValue !== undefined) {
-                    const parts = inputValue.split(",");
+                    const trimmed = inputValue.trim();
+                    const parts = trimmed.split(",");
                     const tempNum = parseFloat(parts[0].trim());
-                    const topPNum = parseFloat(parts[1].trim());
                     await config.update("opencodego.modelPreset", "custom", vscode.ConfigurationTarget.Global);
                     await config.update("opencodego.temperature", tempNum, vscode.ConfigurationTarget.Global);
-                    await config.update("opencodego.top_p", topPNum, vscode.ConfigurationTarget.Global);
-                    vscode.window.showInformationMessage(
-                        l10nFormat("Set to temp: {0}, top_p: {1} (custom)", String(tempNum), String(topPNum))
-                    );
+                    if (parts.length === 2) {
+                        const topPNum = parseFloat(parts[1].trim());
+                        await config.update("opencodego.top_p", topPNum, vscode.ConfigurationTarget.Global);
+                        vscode.window.showInformationMessage(
+                            l10nFormat("Set to temp: {0}, top_p: {1} (custom)", String(tempNum), String(topPNum))
+                        );
+                    } else {
+                        vscode.window.showInformationMessage(
+                            l10nFormat("Set to temperature: {0} (custom)", String(tempNum))
+                        );
+                    }
                 }
             }
         })
