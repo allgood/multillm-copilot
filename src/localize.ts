@@ -58,8 +58,6 @@ const zhCN: Record<string, string> = {
 
 	// extension.ts - model preset (setModelPreset command)
 	"Custom (manual input)": "自定义 (手动输入)",
-	"Current temp: {0}, top_p: {1}": "当前温度 {0}, top_p {1}",
-	"Current temperature: {0}": "当前温度 {0}",
 	" (current)": " (当前)",
 	"(current, temperature: {0}, top_p: {1})": "(当前, 温度: {0}, top_p: {1})",
 	"Set Model Preset": "设置模型预设",
