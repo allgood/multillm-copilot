@@ -195,14 +195,14 @@
 			"opencodego.modelPresets": {
 					"type": "array",
 					"default": [
-						{ "id": "precise", "label": "Precise", "temperature": 0.0, "top_p": 1.0 },
-						{ "id": "balanced", "label": "Balanced", "temperature": 1.0, "top_p": 0.9 },
-						{ "id": "creative", "label": "Creative", "temperature": 1.2, "top_p": 0.95 },
-						{ "id": "extra-creative", "label": "Extra Creative", "temperature": 1.7, "top_p": 0.95 }
+						{ "id": "precise", "label": "Precise", "temperature": 0.0 },
+						{ "id": "balanced", "label": "Balanced", "temperature": 1.0 },
+						{ "id": "creative", "label": "Creative", "temperature": 1.2 },
+						{ "id": "extra-creative", "label": "Extra Creative", "temperature": 1.7 }
 					],
 					"items": {
 						"type": "object",
-						"required": ["id", "label", "temperature", "top_p"],
+						"required": ["id", "label", "temperature"],
 						"properties": {
 							"id": { "type": "string", "description": "%config.modelPreset.id.desc%" },
 							"label": { "type": "string", "description": "%config.modelPreset.label.desc%" },
