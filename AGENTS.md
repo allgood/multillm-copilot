@@ -27,7 +27,8 @@
 | 能力 | 说明 |
 |------|------|
 | **Chat 模型提供商** | 实现 `LanguageModelChatProvider` 接口，向 VS Code 注册为 `opencodego` 厂商 |
-| **多模型支持** | 内置 14 个模型定义，覆盖 6 大模型系列，统一通过推理强度选择器切换思考模式 |
+| **多模型支持** | 内置 14 个模型定义，覆盖 6 大模型系列，统一通过推理强度选择器切换思考模式。可选开启 OpenCode Zen 免费模型（5 个） |
+| **OpenCode Zen 免费模型** | 通过设置开关启用，从 Zen API 获取模型列表并过滤出 5 个免费模型（Big Pickle、DeepSeek V4 Flash、MiniMax M2.5、Ring 2.6 1T、Nemotron 3 Super），以 `OpenCode Zen` 标识追加到模型选择器。支持内存缓存（5 分钟 TTL），API 不可用时静默降级 |
 | **双 API 模式** | 同时支持 **OpenAI 兼容格式** (`/chat/completions`) 和 **Anthropic 格式** (`/v1/messages`) |
 | **流式推理** | 支持 SSE (Server-Sent Events) 流式响应，实时输出文本和工具调用 |
 | **Thinking/推理** | 支持模型的推理过程展示 ("thinking" 状态)，包括 XML think 块解析 |
@@ -45,14 +46,30 @@
 
 ### 1.3 模型清单
 
+#### 内置模型
+
 | 系列 | 模型 ID | 视觉 | 推理强度选择器 | API 格式 |
 |------|---------|------|----------------|----------|
 | GLM | `glm-5.1`, `glm-5` | ❌ | `思考`（不支持思考切换） | OpenAI |
 | Kimi | `kimi-k2.5`, `kimi-k2.6` | ✅ | `禁用思考` / `思考` | OpenAI |
-| DeepSeek | `deepseek-v4-pro`, `deepseek-v4-flash` | ❌ | `禁用思考` / `高` / `最大` | OpenAI |
+| DeepSeek | `deepseek-v4-pro`, `deepseek-v4-flash` | ❌ | `禁用思考` / `高` / `极高` | OpenAI |
 | MiMo | `mimo-v2-pro`, `mimo-v2-omni`, `mimo-v2.5-pro`, `mimo-v2.5` | mimo-v2-omni ✅ | `禁用思考` / `思考` | OpenAI |
 | MiniMax | `minimax-m2.7`, `minimax-m2.5` | ❌ | `禁用思考` / `思考` | OpenAI (m2.7 使用 Anthropic) |
 | Qwen | `qwen3.6-plus`, `qwen3.5-plus` | ✅ | `禁用思考` / `思考` | OpenAI |
+
+#### OpenCode Zen 免费模型（可选）
+
+通过设置 `opencodego.enableZenFreeModels`（默认关闭）启用，从 Zen API 获取模型列表并与硬编码 ID 过滤后加入模型选择器。
+
+| 显示名 | 模型 ID | 视觉 | 推理强度选择器 | API 格式 | 备注 |
+|--------|---------|------|----------------|----------|------|
+| Zen/Big Pickle Free | `big-pickle` | ❌ | `思考`（不支持思考切换） | OpenAI | 限时免费 |
+| Zen/DeepSeek V4 Flash Free | `deepseek-v4-flash-free` | ❌ | `禁用思考` / `高` / `极高` | OpenAI | 限时免费 |
+| Zen/MiniMax M2.5 Free | `minimax-m2.5-free` | ❌ | `禁用思考` / `思考` | OpenAI | 限时免费 |
+| Zen/Ring 2.6 1T Free | `ring-2.6-1t-free` | ❌ | `禁用思考` / `思考` | OpenAI | 限时免费 |
+| Zen/Nemotron 3 Super Free | `nemotron-3-super-free` | ❌ | `禁用思考` / `思考` | OpenAI | 限时免费 |
+
+在模型选择器中，内置模型归入 `OpenCode Go` 分组（`family="OpenCodeGo"`），Zen 免费模型归入 `OpenCode Zen` 分组（`family="OpenCode Zen"`）以作区分。
 
 > 所有模型在模型选择器中均显示**一个条目**，通过**推理强度选择器**（中文标签）切换思考模式。  
 > - `thinkingMode="switchable"`：用户可选择`禁用思考`或启用思考（强度可配置）  
@@ -121,6 +138,7 @@ provideLanguageModelChatResponse(model, messages, options, progress, token)
   ├── 1. 解析模型 ID → getBuiltInModelConfig(model.id)
   │       格式: "baseId"（无 :: 后缀）
   │       所有模型注册为单一条目
+  │       内置模型查找失败时回退到 getZenFreeModelConfig(model.id)
   │
   ├── 2. 应用用户配置的 reasoningEffort
   │       ├── "disabled" → 关闭思考（always 模型除外）
@@ -283,9 +301,11 @@ src/
 ├── gitCommit/
 │   ├── commitMessageGenerator.ts         # Git 提交消息生成
 │   └── gitUtils.ts                       # Git 工具函数
-└── tokenizer/
-    ├── tokenizerManager.ts               # Tokenizer 管理 (o200k_base)
-    └── imageUtils.ts                     # 图片尺寸解析
+├── tokenizer/
+│   ├── tokenizerManager.ts               # Tokenizer 管理 (o200k_base)
+│   └── imageUtils.ts                     # 图片尺寸解析
+└── zen/
+    └── zenModels.ts                      # Zen 免费模型定义与 API 交互
 ```
 
 ### 3.2 文件详细说明
@@ -312,6 +332,7 @@ src/
 | `gitCommit/gitUtils.ts` | ~260 | Git 命令封装 |
 | `tokenizer/tokenizerManager.ts` | ~115 | o200k_base 分词器管理 (含 LRU 缓存) |
 | `tokenizer/imageUtils.ts` | ~130 | 图片尺寸解析 (PNG/GIF/JPEG/WebP) |
+| `zen/zenModels.ts` | ~160 | Zen 免费模型定义、API 拉取、缓存管理、配置查询 |
 
 ---
 
@@ -349,7 +370,7 @@ src/
 计算文本或消息的 Token 数量。委托给 `countMessageTokens()`。
 
 #### `provideLanguageModelChatResponse(model, messages, options, progress, token): Promise<void>`
-核心方法：处理聊天请求，流式返回响应。包括模型配置获取、API Key 验证、推理力度应用、temperature/top_p 注入（模型预设或自定义设置）、延迟控制、超时管理、API 路由、流式解析和错误处理。
+核心方法：处理聊天请求，流式返回响应。包括模型配置获取（内置模型 → Zen 模型回退）、API Key 验证、推理力度应用、temperature/top_p 注入（模型预设或自定义设置）、延迟控制、超时管理、API 路由、流式解析和错误处理。
 
 #### `private async ensureApiKey(): Promise<string | undefined>`
 确保 API Key 存在于 SecretStorage 中，缺失时弹出输入框提示用户输入。
@@ -507,7 +528,7 @@ API 实现的抽象基类。
 ### 4.6 `src/provideModel.ts`
 
 #### `prepareLanguageModelChatInformation(options, _token, _secrets): Promise<LanguageModelChatInformation[]>`
-获取模型信息列表。当前使用硬编码的内置模型列表（委托 `getBuiltInModelInfos()`），记录日志后返回。
+获取模型信息列表。默认使用硬编码的内置模型列表（委托 `getBuiltInModelInfos()`）。当配置 `opencodego.enableZenFreeModels` 开启时，额外调用 `getZenFreeModelInfos()` 获取 Zen 免费模型并追加到列表末尾。Zen 模型获取失败时静默降级（不阻塞模型选择器）。
 
 ---
 
@@ -905,6 +926,45 @@ Anthropic 请求体。包含 `model`, `messages`, `max_tokens`, `system`, `strea
 
 ---
 
+### 4.21 `src/zen/zenModels.ts`
+
+#### `const ZEN_FREE_MODEL_IDS: readonly string[]`
+5 个硬编码的 Zen 免费模型 ID 数组：`big-pickle`、`deepseek-v4-flash-free`、`minimax-m2.5-free`、`ring-2.6-1t-free`、`nemotron-3-super-free`。
+
+#### `const ZEN_FREE_MODEL_METADATA`
+免费模型元数据映射，包含 `displayName`、`contextLength`、`vision`、`maxTokens` 字段。
+
+#### `const ZEN_BASE_URL`
+Zen API 基础 URL：`https://opencode.ai/zen/v1/`。
+
+#### `const CACHE_TTL_MS`
+内存缓存 TTL：5 分钟。
+
+#### `let cachedModelIds: string[] | null`
+模块级缓存：存储最近一次从 Zen API 获取并过滤后的模型 ID 列表。
+
+#### `let cacheTimestamp: number`
+缓存时间戳，用于判断缓存是否过期。
+
+#### `async function fetchZenModelList(apiKey): Promise<string[]>`
+从 `https://opencode.ai/zen/v1/models` 拉取完整的模型 ID 列表。API 遵循 OpenAI `/v1/models` 格式，返回 `{ object: "list", data: [{ id, object, created, owned_by }] }`。
+
+#### `function buildModelInfos(modelIds): LanguageModelChatInformation[]`
+根据模型 ID 列表构建 VS Code 模型信息数组。只包含在 `ZEN_FREE_MODEL_METADATA` 中有对应元数据的模型。每个模型注册为 `isUserSelectable: true`，带 `detail="OpenCode Zen"` 和基础版推理强度选择器（`禁用思考` / `思考`）。
+
+#### `async function getZenFreeModelInfos(secrets): Promise<LanguageModelChatInformation[]>`
+获取 Zen 免费模型列表。流程：
+1. 检查缓存（5 分钟 TTL），有效则直接返回
+2. 获取 API Key，存在则调用 `fetchZenModelList()` 与 `ZEN_FREE_MODEL_IDS` 做交集过滤
+3. 拉取成功 → 更新缓存 → 返回过滤后的模型
+4. 拉取失败 → 使用过期缓存或全量硬编码列表（乐观降级）
+5. 无 API Key → 使用过期缓存或全量硬编码列表
+
+#### `function getZenFreeModelConfig(modelId): OpenCodeGoModelItem | undefined`
+按模型 ID 查找 Zen 免费模型配置。返回 `baseUrl: "https://opencode.ai/zen/v1/"`、`apiMode: "openai"`、`thinkingMode: "switchable"` 的模型配置对象。内置模型找不到时由 `provider.ts` 作为回退调用。
+
+---
+
 ## 5. 编译与构建
 
 ### 5.1 编译命令
@@ -1063,6 +1123,3 @@ type 取值：`feat` | `fix` | `refactor` | `docs` | `chore` | `improve` 等。
 - `openai.stream.*` / `anthropic.stream.*` — 流式处理
 - `apiKey.missing` — API Key 缺失
 
----
-
-*本文档由 AI 自动生成，基于 `opencode-go-copilot-provider` v0.4.2 源码分析。*

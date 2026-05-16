@@ -187,7 +187,12 @@
 					"maximum": 1,
 					"description": "%config.top_p.desc%"
 				},
-				"opencodego.modelPresets": {
+				"opencodego.enableZenFreeModels": {
+				"type": "boolean",
+				"default": false,
+				"description": "%config.enableZenFreeModels.desc%"
+			},
+			"opencodego.modelPresets": {
 					"type": "array",
 					"default": [
 						{ "id": "precise", "label": "Precise", "temperature": 0.0, "top_p": 1.0 },

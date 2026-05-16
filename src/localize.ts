@@ -27,7 +27,8 @@ const zhCN: Record<string, string> = {
 	"Repository not found for provided SCM": "未找到指定 SCM 对应的仓库",
 	"No models configured for commit message generation. Please set 'useForCommitGeneration' to true for at least one model in your configuration.":
 		"未配置用于生成提交消息的模型。请在配置中将至少一个模型的 'useForCommitGeneration' 设为 true。",
-	"Failed to generate commit message:": "生成提交消息失败：",
+	"{0} is no longer available as a free model. Please use a different model.": "{0} 已结束免费使用，请使用其他模型。",
+"Failed to generate commit message:": "生成提交消息失败：",
 	"[Commit Generation Failed]": "[提交生成失败]",
 	"empty API response": "API 返回为空",
 

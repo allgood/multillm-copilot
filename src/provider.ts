@@ -18,6 +18,8 @@ import { createRetryConfig, executeWithRetry } from "./utils";
 
 import { prepareLanguageModelChatInformation } from "./provideModel";
 import { getBuiltInModelConfig } from "./models";
+import { getZenFreeModelConfig } from "./zen/zenModels";
+import { l10nFormat } from "./localize";
 import { countMessageTokens } from "./provideToken";
 import { updateContextStatusBar, recordUsage, updateCumulativeTooltip } from "./statusBar";
 import { OpenaiApi } from "./openai/openaiApi";
@@ -112,9 +114,12 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
         let dispatchFetch: typeof fetch;
 
         try {
-            // Get built-in model config
+            // Get built-in model config (with fallback to Zen free model config)
             const config = vscode.workspace.getConfiguration();
-            const um: OpenCodeGoModelItem | undefined = getBuiltInModelConfig(model.id);
+            let um: OpenCodeGoModelItem | undefined = getBuiltInModelConfig(model.id);
+            if (!um) {
+                um = getZenFreeModelConfig(model.id);
+            }
 
             // Apply reasoning effort from model configuration to determine thinking mode
             // - "disabled" → turn off thinking (unless model has thinkingMode="always")
@@ -348,6 +353,18 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                     throw new Error(l10n("The connection was closed by the server. The generation took too long. Please try again or request shorter content."));
                 }
                 throw new Error(l10n("Request timed out. The generation took too long. You can increase the timeout in settings (opencodego.requestTimeout)."));
+            }
+
+            // Check for Zen free model expiration error
+            if (errMessage.includes("no longer available as a free model") || errMessage.includes("has transitioned to a paid model")) {
+                const caughtModelConfig = getBuiltInModelConfig(model.id) ?? getZenFreeModelConfig(model.id);
+                const caughtModelName = caughtModelConfig?.displayName ?? model.id;
+                logger.error("request.error", {
+                    modelId: model.id,
+                    error: "zen_free_model_expired",
+                    errorMessage: errMessage,
+                });
+                throw new Error(l10nFormat("{0} is no longer available as a free model. Please use a different model.", caughtModelName));
             }
 
             console.error("[OpenCodeGo] Chat request failed", {
