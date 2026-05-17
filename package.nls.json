@@ -41,5 +41,8 @@
 	"config.modelPreset.temperature.desc": "Temperature value (0.0 - 2.0).",
 	"config.modelPreset.top_p.desc": "top_p value (0.0 - 1.0).",
 
+	"config.visionProxyModel.desc": "Vision model ID used by the describe_image tool to describe attached images when the selected model does not support vision.",
+	"config.visionProxyPrompt.desc": "Custom prompt sent to the vision model when describing an image via the describe_image tool.",
+
 	"command.setModelPreset": "Set Model Temperature Preset"
 }

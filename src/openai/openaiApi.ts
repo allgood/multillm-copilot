@@ -29,6 +29,8 @@ import {
 
 import { CommonApi, StreamUsage } from "../commonApi";
 import { logger } from "../logger";
+import type { StoredImage } from "../vision/types";
+import { DESCRIBE_IMAGE_TOOL_NAME, DESCRIBE_IMAGE_TOOL_DEF } from "../vision/types";
 
 export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unknown>> {
     constructor(modelId: string) {
@@ -36,13 +38,45 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
     }
 
     /**
+     * Whether images were stored during convertMessages for describe_image tool.
+     */
+    private _hasStoredImages = false;
+
+    /**
      * Convert VS Code chat request messages into OpenAI-compatible message objects.
+     * For non-vision models, images are replaced with text references and stored
+     * in the static CommonApi.storedImages map for the describe_image tool.
      */
     convertMessages(
         messages: readonly LanguageModelChatRequestMessage[],
-        modelConfig: { includeReasoningInRequest: boolean }
+        modelConfig: { includeReasoningInRequest: boolean; vision?: boolean }
     ): OpenAIChatMessage[] {
+        const modelSupportsVision = modelConfig.vision !== false;
         const out: OpenAIChatMessage[] = [];
+        let imageIndex = 0;
+
+        // Collect images to store if model doesn't support vision
+        let imagesToStore: StoredImage[] | undefined;
+        if (!modelSupportsVision) {
+            for (const m of messages) {
+                for (const part of m.content ?? []) {
+                    if (part instanceof vscode.LanguageModelDataPart && isImageMimeType(part.mimeType)) {
+                        if (!imagesToStore) imagesToStore = [];
+                        imagesToStore.push({
+                            data: part.data,
+                            mimeType: part.mimeType,
+                        });
+                    }
+                }
+            }
+            if (imagesToStore && imagesToStore.length > 0) {
+                const key = CommonApi.generateImageStoreKey();
+                CommonApi.storedImages.set(key, imagesToStore);
+                this._imageStoreKey = key;
+                this._hasStoredImages = true;
+            }
+        }
+
         for (const m of messages) {
             const role = mapRole(m);
             const textParts: string[] = [];
@@ -55,7 +89,14 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                 if (part instanceof vscode.LanguageModelTextPart) {
                     textParts.push(part.value);
                 } else if (part instanceof vscode.LanguageModelDataPart && isImageMimeType(part.mimeType)) {
-                    imageParts.push(part);
+                    if (modelSupportsVision) {
+                        imageParts.push(part);
+                    } else {
+                        // For non-vision models, replace image with text reference
+                        // Use strong directive language so the model knows it MUST use describe_image
+                        textParts.push(`\n[The user sent an image (imageIndex=${imageIndex}). I cannot see images - I MUST call the describe_image tool with imageIndex=${imageIndex} to get a description of this image.]`);
+                        imageIndex++;
+                    }
                 } else if (part instanceof vscode.LanguageModelToolCallPart) {
                     const id = part.callId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
                     let args = "{}";
@@ -142,6 +183,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                 out.push({ role, content: joinedText });
             }
         }
+        this._originalApiMessages = out as any[];
         return out;
     }
 
@@ -207,10 +249,20 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 
         // tools
         const toolConfig = convertToolsToOpenAI(options);
+        const toolsList: any[] = [];
         if (toolConfig.tools) {
-            rb.tools = toolConfig.tools;
+            toolsList.push(...toolConfig.tools);
         }
-        if (toolConfig.tool_choice) {
+        // Inject describe_image tool for non-vision models with stored images
+        if (this._hasStoredImages) {
+            toolsList.push(DESCRIBE_IMAGE_TOOL_DEF);
+        }
+        if (toolsList.length > 0) {
+            rb.tools = toolsList;
+        }
+        if (this._hasStoredImages) {
+            rb.tool_choice = "auto";
+        } else if (toolConfig.tool_choice) {
             rb.tool_choice = toolConfig.tool_choice;
         }
 

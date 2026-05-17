@@ -10,6 +10,8 @@ import {
 } from "vscode";
 import { OpenCodeGoModelItem } from "./types";
 import { tryParseJSONObject } from "./utils";
+import type { InterceptedToolCall, StoredImage } from "./vision/types";
+import { DESCRIBE_IMAGE_TOOL_NAME } from "./vision/types";
 
 /**
  * Token usage information extracted from streaming response usage chunk.
@@ -69,6 +71,61 @@ export abstract class CommonApi<TMessage, TRequestBody> {
         this._onUsage = callback;
     }
 
+    /**
+     * When a describe_image tool call is intercepted during streaming,
+     * this holds the parsed tool call info for the provider to handle.
+     */
+    public interceptedToolCall: InterceptedToolCall | null = null;
+
+    /**
+     * Key used to retrieve stored images from CommonApi.storedImages.
+     * Set during convertMessages when images are stored for non-vision models.
+     */
+    protected _imageStoreKey: string | null = null;
+
+    /**
+     * Store the converted API messages so the provider can reference them
+     * when building the second round (tool call + result) request.
+     */
+    protected _originalApiMessages: any[] | null = null;
+
+    /**
+     * Get the stored images associated with this instance, if any.
+     */
+    public getStoredImage(imageIndex: number): StoredImage | undefined {
+        if (!this._imageStoreKey) return undefined;
+        const images = CommonApi.storedImages.get(this._imageStoreKey);
+        if (!images || imageIndex < 0 || imageIndex >= images.length) return undefined;
+        return images[imageIndex];
+    }
+
+    /**
+     * Clean up stored images for this instance.
+     */
+    public cleanupStoredImages(): void {
+        if (this._imageStoreKey) {
+            CommonApi.storedImages.delete(this._imageStoreKey);
+            this._imageStoreKey = null;
+        }
+    }
+
+    /**
+     * Static storage for images attached to the conversation.
+     * Keyed by a unique request identifier set during convertMessages.
+     */
+    public static readonly storedImages = new Map<string, StoredImage[]>();
+
+    /** Static counter for generating unique image storage keys. */
+    private static _nextImageStoreId = 0;
+
+    /**
+     * Generate a unique key for storing images in the static map.
+     */
+    public static generateImageStoreKey(): string {
+        const id = ++CommonApi._nextImageStoreId;
+        return `req_${id}`;
+    }
+
     constructor(modelId: string) {
         this._modelId = modelId;
     }
@@ -124,6 +181,10 @@ export abstract class CommonApi<TMessage, TRequestBody> {
         if (!buf.name) {
             return;
         }
+        // Skip describe_image — handled by provider via interceptedToolCall
+        if (buf.name === DESCRIBE_IMAGE_TOOL_NAME) {
+            return;
+        }
         const canParse = tryParseJSONObject(buf.args);
         if (!canParse.ok) {
             return;
@@ -149,6 +210,22 @@ export abstract class CommonApi<TMessage, TRequestBody> {
             return;
         }
         for (const [idx, buf] of Array.from(this._toolCallBuffers.entries())) {
+            // Intercept describe_image — store on instance for provider to handle
+            if (buf.name === DESCRIBE_IMAGE_TOOL_NAME) {
+                const argsText = buf.args.trim() || "{}";
+                const parsed = tryParseJSONObject(argsText);
+                if (parsed.ok) {
+                    this.interceptedToolCall = {
+                        id: buf.id ?? `call_${Math.random().toString(36).slice(2, 10)}`,
+                        name: buf.name,
+                        args: parsed.value as { imageIndex: number; detailLevel?: "brief" | "normal" | "detailed" },
+                    };
+                }
+                this._toolCallBuffers.delete(idx);
+                this._completedToolCallIndices.add(idx);
+                continue;
+            }
+
             const argsText = buf.args.trim() || "{}";
             const parsed = tryParseJSONObject(argsText);
             if (!parsed.ok) {

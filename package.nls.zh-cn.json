@@ -41,5 +41,8 @@
 	"config.modelPreset.temperature.desc": "温度值 (0.0 - 2.0)。",
 	"config.modelPreset.top_p.desc": "top_p 值 (0.0 - 1.0)。",
 
+	"config.visionProxyModel.desc": "用于 describe_image 工具的视觉模型 ID。当所选模型不支持视觉时，该模型用于描述附带的图片。",
+	"config.visionProxyPrompt.desc": "发送给视觉模型的图片描述提示词。可通过 describe_image 工具调用。",
+
 	"command.setModelPreset": "设置模型温度预设"
 }

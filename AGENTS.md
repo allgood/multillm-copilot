@@ -33,6 +33,7 @@
 | **流式推理** | 支持 SSE (Server-Sent Events) 流式响应，实时输出文本和工具调用 |
 | **Thinking/推理** | 支持模型的推理过程展示 ("thinking" 状态)，包括 XML think 块解析 |
 | **工具调用 (Tool Calling)** | 支持 VS Code 的 LanguageModelToolCallPart 机制 |
+| **图片代理 (Tool-based)** | 为不支持视觉的模型注入 `describe_image` 工具，模型可自主选择调用视觉模型（默认 Qwen3.6-Plus）描述图片，支持两轮 API 请求完成"调用工具→获取描述→继续回答"的完整流程 |
 | **Token 计数** | 使用 `o200k_base` tiktoken 分词器精确统计 token 用量 |
 | **状态栏** | 实时显示当前会话 token 使用量、累计用量、缓存命中率 |
 | **Git 提交消息生成** | 一键生成 Conventional Commit 格式的 Git 提交消息，支持 `auto` 语言模式自动从历史提交检测语言 |
@@ -244,6 +245,36 @@ provideLanguageModelChatResponse(model, messages, options, progress, token)
   3. tryEmitBufferedToolCall() → 参数可解析 JSON 时立即发射
   4. flushToolCallBuffers() → finish_reason 时强制发射剩余
   5. adjustReadFileParameters() → 自动扩增 read_file 行数
+  describe_image 拦截: 不在 tryEmit/flush 中发出，改为设置 interceptedToolCall
+```
+
+### 2.6 图片代理（describe_image Tool）流程
+
+```
+非视觉模型收到含图片的消息:
+  │
+  ├── 1. convertMessages()
+  │      模型 vision=false，有 image → 替换为 "[Image attached (imageIndex=N)...]"
+  │      原图数据存入 CommonApi.storedImages
+  │
+  ├── 2. prepareRequestBody()
+  │      在 tools 数组中注入 describe_image 工具定义
+  │
+  ├── 3. 第一次 API 请求（含 describe_image 工具）
+  │      └── 模型决定是否调用 describe_image
+  │
+  ├── 4. processDelta() 拦截
+  │      describe_image 被缓存到 interceptedToolCall
+  │      不在 progress 中发出 LanguageModelToolCallPart（避免 Copilot 拦截）
+  │
+  ├── 5. provider 检测 interceptedToolCall
+  │      ├── 发出 LanguageModelThinkingPart("🔍 Reading image...")
+  │      ├── 调 visionModel.sendRequest([图片 + 描述提示词])
+  │      └── 发出 LanguageModelTextPart("[Image Description: ...]")
+  │
+  └── 6. 第二次 API 请求
+         ├── 追加 assistant(tool_calls) + tool(result)
+         └── 模型基于描述继续生成 → 输出最终回答
 ```
 
 ### 2.6 Git 提交消息生成流程
@@ -304,6 +335,9 @@ src/
 ├── tokenizer/
 │   ├── tokenizerManager.ts               # Tokenizer 管理 (o200k_base)
 │   └── imageUtils.ts                     # 图片尺寸解析
+├── vision/
+│   ├── types.ts                          # Vision proxy 类型定义
+│   └── imageProxy.ts                     # 图片代理核心 (describe_image)
 └── zen/
     └── zenModels.ts                      # Zen 免费模型定义与 API 交互
 ```
@@ -332,6 +366,8 @@ src/
 | `gitCommit/gitUtils.ts` | ~260 | Git 命令封装 |
 | `tokenizer/tokenizerManager.ts` | ~115 | o200k_base 分词器管理 (含 LRU 缓存) |
 | `tokenizer/imageUtils.ts` | ~130 | 图片尺寸解析 (PNG/GIF/JPEG/WebP) |
+| `vision/types.ts` | ~40 | Vision proxy 类型定义（`StoredImage`, `InterceptedToolCall`, `DESCRIBE_IMAGE_TOOL_DEF`） |
+| `vision/imageProxy.ts` | ~45 | 图片代理核心：调用视觉模型描述图片（`callVisionModel`） |
 | `zen/zenModels.ts` | ~160 | Zen 免费模型定义、API 拉取、缓存管理、配置查询 |
 
 ---
@@ -483,21 +519,30 @@ API 实现的抽象基类。
 | `_systemContent` | `string \| undefined` | 系统提示内容 |
 | `_modelId` | `string` | 模型 ID |
 | `_onUsage` | `((usage: StreamUsage) => void) \| undefined` | 用量回调 |
+| `interceptedToolCall` | `InterceptedToolCall \| null` | 被拦截的 describe_image 工具调用 |
+| `storedImages` | `Map<string, StoredImage[]>`（静态） | 请求图片数据暂存池 |
+| `generateImageStoreKey()` | `string`（静态） | 生成唯一的图片存储键 |
 
 #### `abstract convertMessages(messages, modelConfig): TMessage[]`
-将 VS Code 聊天消息转换为特定 API 格式的消息数组。
+将 VS Code 聊天消息转换为特定 API 格式的消息数组。modelConfig 新增 `vision` 字段，非视觉模型时自动替换图片为文本引用并存储图片数据。
 
 #### `abstract prepareRequestBody(rb, um, options?): TRequestBody`
-构建特定 API 的请求体。
+构建特定 API 的请求体。非视觉模型且存在图片时自动注入 `describe_image` 工具定义。
 
 #### `abstract processStreamingResponse(responseBody, progress, token): Promise<void>`
 处理特定 API 的流式响应。
 
 #### `protected tryEmitBufferedToolCall(index, progress): Promise<void>`
-当工具调用的名称和 JSON 参数都可用时，尝试发射缓冲的工具调用。
+当工具调用的名称和 JSON 参数都可用时，尝试发射缓冲的工具调用。跳过 `describe_image` 工具（由 provider 处理）。
 
 #### `protected flushToolCallBuffers(progress, throwOnInvalid): Promise<void>`
-清空所有工具调用缓冲区，发射剩余的工具调用。
+清空所有工具调用缓冲区，发射剩余的工具调用。拦截 `describe_image` 存入 `interceptedToolCall`。
+
+#### `public getStoredImage(imageIndex): StoredImage | undefined`
+从静态 `storedImages` 池中按索引获取存储的图片数据。
+
+#### `public cleanupStoredImages(): void`
+清理此实例的存储图片。
 
 #### `protected adjustReadFileParameters(toolName, parameters): Record<string, unknown>`
 调整 `read_file` 工具的参数，根据配置自动扩增读取行数。
@@ -603,6 +648,32 @@ API 实现的抽象基类。
 
 #### `tryParseJSONObject(text): { ok: true, value } | { ok: false }`
 安全尝试解析 JSON 对象字符串。
+
+---
+
+### 4.22 `src/vision/types.ts`
+
+#### `interface StoredImage`
+`{ data: Uint8Array; mimeType: string }` — 存储的图片数据，用于 describe_image 工具。
+
+#### `interface InterceptedToolCall`
+`{ id: string; name: string; args: { imageIndex: number; detailLevel?: "brief" | "normal" | "detailed" } }` — 被拦截的 describe_image 工具调用信息。
+
+#### `const DESCRIBE_IMAGE_TOOL_DEF`
+describe_image 工具定义的 OpenAI 格式（`type: "function"`），包含参数签名。
+
+#### `const DESCRIBE_IMAGE_TOOL_NAME`
+`"describe_image"` — describe_image 工具名称常量。
+
+#### `const DEFAULT_VISION_PROMPT`
+默认的图片描述提示词。
+
+---
+
+### 4.23 `src/vision/imageProxy.ts`
+
+#### `callVisionModel(imageData, mimeType, visionModelId, visionPrompt, token): Promise<string>`
+调用视觉模型描述图片。使用 `vscode.lm.selectChatModels()` 查找模型，发送图片+提示词，收集流式文本描述返回。
 
 ---
 

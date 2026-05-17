@@ -22,11 +22,16 @@ import { isImageMimeType, isToolResultPart, collectToolResultText, convertToolsT
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
+import type { StoredImage } from "../vision/types";
+import { DESCRIBE_IMAGE_TOOL_NAME, DESCRIBE_IMAGE_TOOL_DEF } from "../vision/types";
 
 export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBody> {
 	constructor(modelId: string) {
 		super(modelId);
 	}
+
+	/** Whether images were stored during convertMessages for describe_image tool. */
+	private _hasStoredImages = false;
 
 	/**
 	 * Convert VS Code chat messages to Anthropic message format.
@@ -36,9 +41,33 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 	 */
 	convertMessages(
 		messages: readonly LanguageModelChatRequestMessage[],
-		modelConfig: { includeReasoningInRequest: boolean }
+		modelConfig: { includeReasoningInRequest: boolean; vision?: boolean }
 	): AnthropicMessage[] {
+		const modelSupportsVision = modelConfig.vision !== false;
 		const out: AnthropicMessage[] = [];
+		let imageIndex = 0;
+
+		// Collect images to store if model doesn't support vision
+		let imagesToStore: StoredImage[] | undefined;
+		if (!modelSupportsVision) {
+			for (const m of messages) {
+				for (const part of m.content ?? []) {
+					if (part instanceof vscode.LanguageModelDataPart && isImageMimeType(part.mimeType)) {
+						if (!imagesToStore) imagesToStore = [];
+						imagesToStore.push({
+							data: part.data,
+							mimeType: part.mimeType,
+						});
+					}
+				}
+			}
+			if (imagesToStore && imagesToStore.length > 0) {
+				const key = CommonApi.generateImageStoreKey();
+				CommonApi.storedImages.set(key, imagesToStore);
+				this._imageStoreKey = key;
+				this._hasStoredImages = true;
+			}
+		}
 
 		for (const m of messages) {
 			const role = mapRole(m);
@@ -97,17 +126,28 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 				});
 			}
 
-			// Add image content
-			for (const imagePart of imageParts) {
-				const base64Data = Buffer.from(imagePart.data).toString("base64");
-				contentBlocks.push({
-					type: "image",
-					source: {
-						type: "base64",
-						media_type: imagePart.mimeType,
-						data: base64Data,
-					},
-				});
+			if (modelSupportsVision) {
+				// Add image content (vision model)
+				for (const imagePart of imageParts) {
+					const base64Data = Buffer.from(imagePart.data).toString("base64");
+					contentBlocks.push({
+						type: "image",
+						source: {
+							type: "base64",
+							media_type: imagePart.mimeType,
+							data: base64Data,
+						},
+					});
+				}
+			} else {
+				// Non-vision model: add text references for stored images
+				for (let i = 0; i < imageParts.length; i++) {
+					contentBlocks.push({
+						type: "text",
+						text: `[The user sent an image (imageIndex=${imageIndex}). I cannot see images - I MUST call the describe_image tool with imageIndex=${imageIndex} to get a description.]`,
+					});
+					imageIndex++;
+				}
 			}
 
 			// Add thinking content for assistant messages
@@ -146,6 +186,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 			}
 		}
 
+		this._originalApiMessages = out as any[];
 		return out;
 	}
 
@@ -183,17 +224,33 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 
 		// Add tools configuration
 		const toolConfig = convertToolsToOpenAI(options);
+		const anthropicToolList: Array<{ name: string; description?: string; input_schema?: object }> = [];
 		if (toolConfig.tools) {
-			// Convert OpenAI tool definitions to Anthropic format
-			rb.tools = toolConfig.tools.map((tool) => ({
-				name: tool.function.name,
-				description: tool.function.description,
-				input_schema: tool.function.parameters,
-			}));
+			for (const tool of toolConfig.tools) {
+				anthropicToolList.push({
+					name: tool.function.name,
+					description: tool.function.description,
+					input_schema: tool.function.parameters,
+				});
+			}
+		}
+		// Inject describe_image tool for non-vision models with stored images
+		if (this._hasStoredImages) {
+			const def = DESCRIBE_IMAGE_TOOL_DEF as unknown as { function: { name: string; description: string; parameters: object } };
+			anthropicToolList.push({
+				name: def.function.name,
+				description: def.function.description,
+				input_schema: def.function.parameters,
+			});
+		}
+		if (anthropicToolList.length > 0) {
+			rb.tools = anthropicToolList;
 		}
 
 		// Add tool_choice (Anthropic format)
-		if (toolConfig.tool_choice) {
+		if (this._hasStoredImages) {
+			rb.tool_choice = { type: "auto" };
+		} else if (toolConfig.tool_choice) {
 			if (toolConfig.tool_choice === "auto") {
 				rb.tool_choice = { type: "auto" };
 			} else if (toolConfig.tool_choice === "none") {

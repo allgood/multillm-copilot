@@ -26,6 +26,9 @@ import { OpenaiApi } from "./openai/openaiApi";
 import { AnthropicApi } from "./anthropic/anthropicApi";
 import type { AnthropicRequestBody } from "./anthropic/anthropicTypes";
 import { CommonApi } from "./commonApi";
+import { callVisionModel } from "./vision/imageProxy";
+import { DESCRIBE_IMAGE_TOOL_NAME } from "./vision/types";
+import type { InterceptedToolCall, StoredImage } from "./vision/types";
 import { logger } from "./logger";
 import { l10n } from "./localize";
 
@@ -181,6 +184,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
             // Prepare model configuration
             const modelConfig = {
                 includeReasoningInRequest: um?.include_reasoning_in_request ?? true,
+                vision: um?.vision ?? false,
             };
 
             // Update Token Usage
@@ -285,6 +289,25 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                     throw new Error("No response body from Anthropic API");
                 }
                 await anthropicApi.processStreamingResponse(response.body, trackingProgress, token);
+
+                // --- Second round: handle describe_image tool call interception ---
+                await this._handleInterceptedToolCall({
+                    api: anthropicApi,
+                    apiMode: "anthropic",
+                    model: model,
+                    um: um,
+                    modelApiKey: modelApiKey,
+                    baseUrl: BASE_URL,
+                    dispatchFetch: dispatchFetch,
+                    requestHeaders: requestHeaders,
+                    retryConfig: retryConfig,
+                    abortController: abortController,
+                    trackingProgress: trackingProgress,
+                    token: token,
+                });
+
+                // Clean up stored images
+                anthropicApi.cleanupStoredImages();
             } else {
                 // OpenAI Chat Completions API mode
                 const openaiApi = new OpenaiApi(model.id);
@@ -331,6 +354,25 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 }
 
                 await openaiApi.processStreamingResponse(response.body, trackingProgress, token);
+
+                // --- Second round: handle describe_image tool call interception ---
+                await this._handleInterceptedToolCall({
+                    api: openaiApi,
+                    apiMode: "openai",
+                    model: model,
+                    um: um,
+                    modelApiKey: modelApiKey,
+                    baseUrl: BASE_URL,
+                    dispatchFetch: dispatchFetch,
+                    requestHeaders: requestHeaders,
+                    retryConfig: retryConfig,
+                    abortController: abortController,
+                    trackingProgress: trackingProgress,
+                    token: token,
+                });
+
+                // Clean up stored images
+                openaiApi.cleanupStoredImages();
             }
         } catch (err) {
             // Determine if the request was aborted/terminated (friendly message instead of raw error)
@@ -384,6 +426,209 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
             const durationMs = Date.now() - requestStartTime;
             logger.info("request.end", { modelId: model.id, durationMs });
             this._lastRequestTime = Date.now();
+        }
+    }
+
+    /**
+     * Handle a describe_image tool call interception by calling the vision model
+     * and making a second round API request with the tool call + description result.
+     */
+    private async _handleInterceptedToolCall(params: {
+        api: CommonApi<any, any>;
+        apiMode: string;
+        model: LanguageModelChatInformation;
+        um: OpenCodeGoModelItem | undefined;
+        modelApiKey: string;
+        baseUrl: string;
+        dispatchFetch: typeof fetch;
+        requestHeaders: Record<string, string>;
+        retryConfig: ReturnType<typeof createRetryConfig>;
+        abortController: AbortController;
+        trackingProgress: Progress<LanguageModelResponsePart2>;
+        token: CancellationToken;
+    }): Promise<void> {
+        const intercepted = params.api.interceptedToolCall;
+        if (!intercepted) {
+            logger.debug("vision.no-intercepted-call", {
+                hasStoredImages: !!(params.api as any)._imageStoreKey,
+                originalMessagesLen: ((params.api as any)._originalApiMessages as any[])?.length ?? 0,
+            });
+            return;
+        }
+
+        logger.info("vision.intercepted", {
+            toolName: intercepted.name,
+            imageIndex: intercepted.args.imageIndex,
+            apiMode: params.apiMode,
+        });
+
+        const config = vscode.workspace.getConfiguration();
+        const visionModelId = config.get<string>("opencodego.visionProxyModel", "qwen3.6-plus");
+        const visionPrompt = config.get<string>("opencodego.visionProxyPrompt", "");
+
+        // Get the stored image data
+        const storedImage = params.api.getStoredImage(intercepted.args.imageIndex);
+        if (!storedImage) {
+            logger.warn("vision.image-not-found", { imageIndex: intercepted.args.imageIndex });
+            return;
+        }
+
+        // Emit thinking progress to indicate image reading
+        params.trackingProgress.report(
+            new vscode.LanguageModelThinkingPart(`🔍 Reading image using ${visionModelId}...`)
+        );
+
+        // Call vision model to describe the image
+        let description: string;
+        try {
+            description = await callVisionModel(
+                storedImage.data,
+                storedImage.mimeType,
+                visionModelId,
+                visionPrompt || undefined,
+                params.token
+            );
+        } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            logger.error("vision.call-failed", { error: errMsg, visionModelId });
+            description = "[Image Description unavailable]";
+        }
+
+        // End thinking, then emit the description as text
+        params.trackingProgress.report(
+            new vscode.LanguageModelThinkingPart("", `${Date.now()}_done`)
+        );
+        params.trackingProgress.report(
+            new vscode.LanguageModelTextPart(`[Image Description: ${description}]`)
+        );
+
+        // Build second-round messages and make another API request
+        const api = params.api;
+        // Get the original API messages (specific to each format)
+        const storedMessages = (api as any)._originalApiMessages as any[] | undefined;
+        if (!storedMessages || storedMessages.length === 0) {
+            logger.warn("vision.no-second-round-messages", {});
+            return;
+        }
+
+        const toolCallId = intercepted.id;
+        const toolArgs = intercepted.args;
+
+        if (params.apiMode === "anthropic") {
+            // Anthropic format second round
+            const secondMessages = [
+                ...storedMessages,
+                {
+                    role: "assistant" as const,
+                    content: [
+                        { type: "tool_use" as const, id: toolCallId, name: DESCRIBE_IMAGE_TOOL_NAME, input: toolArgs },
+                    ],
+                },
+                {
+                    role: "user" as const,
+                    content: [
+                        { type: "tool_result" as const, tool_use_id: toolCallId, content: description },
+                    ],
+                },
+            ];
+
+            let secondBody: Record<string, unknown> = {
+                model: params.um?.id ?? params.model.id,
+                messages: secondMessages,
+                stream: true,
+            };
+            // Apply common Anthropic-like params without injecting tools
+            if (params.um?.max_completion_tokens !== undefined) {
+                secondBody.max_tokens = params.um.max_completion_tokens;
+            } else if (params.um?.max_tokens !== undefined) {
+                secondBody.max_tokens = params.um.max_tokens;
+            }
+            if (params.um?.temperature !== undefined && params.um.temperature !== null) {
+                secondBody.temperature = params.um.temperature;
+            }
+
+            const secondUrl = params.baseUrl.replace(/\/+$/, "");
+            const url = secondUrl.endsWith("/v1")
+                ? `${secondUrl}/messages`
+                : `${secondUrl}/v1/messages`;
+
+            const secondResponse = await executeWithRetry(async () => {
+                const res = await params.dispatchFetch(url, {
+                    method: "POST",
+                    headers: params.requestHeaders,
+                    body: JSON.stringify(secondBody),
+                    signal: params.abortController.signal,
+                });
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    throw new Error(`Anthropic API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}`);
+                }
+                return res;
+            }, params.retryConfig);
+
+            if (secondResponse.body) {
+                await api.processStreamingResponse(secondResponse.body, params.trackingProgress, params.token);
+            }
+        } else {
+            // OpenAI format second round
+            const secondMessages = [
+                ...storedMessages,
+                {
+                    role: "assistant" as const,
+                    content: null as string | null,
+                    tool_calls: [
+                        {
+                            id: toolCallId,
+                            type: "function" as const,
+                            function: {
+                                name: DESCRIBE_IMAGE_TOOL_NAME,
+                                arguments: JSON.stringify(toolArgs),
+                            },
+                        },
+                    ],
+                },
+                {
+                    role: "tool" as const,
+                    tool_call_id: toolCallId,
+                    content: description,
+                },
+            ];
+
+            let secondBody: Record<string, unknown> = {
+                model: params.um?.id ?? params.model.id,
+                messages: secondMessages,
+                stream: true,
+                stream_options: { include_usage: true },
+            };
+            // Apply temperature and other params without injecting tools
+            if (params.um?.temperature !== undefined && params.um.temperature !== null) {
+                secondBody.temperature = params.um.temperature;
+            }
+            if (params.um?.top_p !== undefined && params.um.top_p !== null) {
+                secondBody.top_p = params.um.top_p;
+            }
+            if (params.um?.max_completion_tokens !== undefined) {
+                secondBody.max_completion_tokens = params.um.max_completion_tokens;
+            }
+
+            const url = `${params.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+            const secondResponse = await executeWithRetry(async () => {
+                const res = await params.dispatchFetch(url, {
+                    method: "POST",
+                    headers: params.requestHeaders,
+                    body: JSON.stringify(secondBody),
+                    signal: params.abortController.signal,
+                });
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    throw new Error(`API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}`);
+                }
+                return res;
+            }, params.retryConfig);
+
+            if (secondResponse.body) {
+                await api.processStreamingResponse(secondResponse.body, params.trackingProgress, params.token);
+            }
         }
     }
 
