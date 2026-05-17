@@ -576,6 +576,9 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 {
                     role: "assistant" as const,
                     content: null as string | null,
+                    // DeepSeek requires reasoning_content when thinking mode is enabled,
+                    // even on tool call assistant messages
+                    reasoning_content: "Calling describe_image tool to get a description of the user's attached image.",
                     tool_calls: [
                         {
                             id: toolCallId,
@@ -609,6 +612,15 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
             }
             if (params.um?.max_completion_tokens !== undefined) {
                 secondBody.max_completion_tokens = params.um.max_completion_tokens;
+            }
+            // Preserve thinking mode for second round (required by DeepSeek)
+            if (params.um?.enable_thinking !== false && params.um?.reasoning_effort !== undefined) {
+                secondBody.reasoning_effort = params.um.reasoning_effort;
+            }
+            if (params.um?.enable_thinking === true) {
+                secondBody.thinking = { type: "enabled" };
+            } else {
+                secondBody.thinking = { type: "disabled" };
             }
 
             const url = `${params.baseUrl.replace(/\/+$/, "")}/chat/completions`;

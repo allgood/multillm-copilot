@@ -94,7 +94,9 @@ export function getBuiltInModelInfos(): LanguageModelChatInformation[] {
             isUserSelectable: true,
             capabilities: {
                 toolCalling: true,
-                imageInput: def.vision,
+                // Always declare imageInput=true so VS Code passes image data through.
+                // Non-vision models handle images via the describe_image tool proxy internally.
+                imageInput: true,
             },
         };
 

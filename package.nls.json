@@ -43,6 +43,7 @@
 
 	"config.visionProxyModel.desc": "Vision model ID used by the describe_image tool to describe attached images when the selected model does not support vision.",
 	"config.visionProxyPrompt.desc": "Custom prompt sent to the vision model when describing an image via the describe_image tool.",
+	"config.visionProxyThinking.desc": "Enable thinking/reasoning when describing images via the vision proxy model.",
 
 	"command.setModelPreset": "Set Model Temperature Preset"
 }

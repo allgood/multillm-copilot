@@ -261,6 +261,10 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
             rb.tools = toolsList;
         }
         if (this._hasStoredImages) {
+            // Set to "auto" so the model can freely choose to call describe_image.
+            // Some providers (DeepSeek) reject forced function tool_choice.
+            // The converted messages already contain strong directives telling the
+            // model it MUST use describe_image, and the tool definition is available.
             rb.tool_choice = "auto";
         } else if (toolConfig.tool_choice) {
             rb.tool_choice = toolConfig.tool_choice;
