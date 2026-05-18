@@ -4,9 +4,9 @@ import {
     LanguageModelChatInformation,
     LanguageModelChatProvider,
     LanguageModelChatRequestMessage,
+    LanguageModelResponsePart,
     PrepareLanguageModelChatModelOptions,
     ProvideLanguageModelChatResponseOptions,
-    LanguageModelResponsePart2,
     Progress,
 } from "vscode";
 
@@ -45,7 +45,7 @@ import { l10n } from "./localize";
  */
 function reportNativeUsage(
     usage: StreamUsage,
-    progress: Progress<LanguageModelResponsePart2>
+    progress: Progress<LanguageModelResponsePart>
 ): void {
     progress.report(
         new vscode.LanguageModelDataPart(
@@ -123,10 +123,10 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
         model: LanguageModelChatInformation,
         messages: readonly LanguageModelChatRequestMessage[],
         options: ProvideLanguageModelChatResponseOptions,
-        progress: Progress<LanguageModelResponsePart2>,
+        progress: Progress<LanguageModelResponsePart>,
         token: CancellationToken
     ): Promise<void> {
-        const trackingProgress: Progress<LanguageModelResponsePart2> = {
+        const trackingProgress: Progress<LanguageModelResponsePart> = {
             report: (part) => {
                 try {
                     progress.report(part);
@@ -286,8 +286,8 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 // Anthropic API mode
                 const anthropicApi = new AnthropicApi(model.id);
                 anthropicApi.onUsage = (usage) => {
-                    // Always report to native Copilot indicator
-                    reportNativeUsage(usage, trackingProgress);
+                    // Always report to native Copilot indicator (use original progress, not trackingProgress wrapper)
+                    reportNativeUsage(usage, progress);
                     // Conditionally update third-party status bar
                     if (enableThirdPartyIndicator) {
                         recordUsage(usage);
@@ -356,8 +356,8 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 // OpenAI Chat Completions API mode
                 const openaiApi = new OpenaiApi(model.id);
                 openaiApi.onUsage = (usage) => {
-                    // Always report to native Copilot indicator
-                    reportNativeUsage(usage, trackingProgress);
+                    // Always report to native Copilot indicator (use original progress, not trackingProgress wrapper)
+                    reportNativeUsage(usage, progress);
                     // Conditionally update third-party status bar
                     if (enableThirdPartyIndicator) {
                         recordUsage(usage);
@@ -493,7 +493,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
         requestHeaders: Record<string, string>;
         retryConfig: ReturnType<typeof createRetryConfig>;
         abortController: AbortController;
-        trackingProgress: Progress<LanguageModelResponsePart2>;
+        trackingProgress: Progress<LanguageModelResponsePart>;
         token: CancellationToken;
     }): Promise<void> {
         const intercepted = params.api.interceptedToolCall;
@@ -525,7 +525,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
         // Emit a brief thinking indicator BEFORE reading the image
         const visionThinkId = `vision_${Date.now()}`;
         params.trackingProgress.report(
-            new vscode.LanguageModelThinkingPart(l10n("Reading image..."), visionThinkId)
+            new vscode.LanguageModelThinkingPart(l10n("Reading image..."), visionThinkId) as unknown as LanguageModelResponsePart
         );
 
         // Call vision model to describe the image (result is for internal use only)
@@ -547,10 +547,10 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
         // Append "done" to the thinking block, then close it.
         // The description is only for the model (second round via tool_result).
         params.trackingProgress.report(
-            new vscode.LanguageModelThinkingPart(l10n(" done"), visionThinkId)
+            new vscode.LanguageModelThinkingPart(l10n(" done"), visionThinkId) as unknown as LanguageModelResponsePart
         );
         params.trackingProgress.report(
-            new vscode.LanguageModelThinkingPart("", visionThinkId)
+            new vscode.LanguageModelThinkingPart("", visionThinkId) as unknown as LanguageModelResponsePart
         );
 
         // Build second-round messages and make another API request

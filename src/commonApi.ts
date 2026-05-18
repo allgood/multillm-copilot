@@ -1,9 +1,9 @@
 import * as vscode from "vscode";
 import {
+    LanguageModelResponsePart,
     ProvideLanguageModelChatResponseOptions,
     LanguageModelChatRequestMessage,
     LanguageModelToolCallPart,
-    LanguageModelResponsePart2,
     LanguageModelThinkingPart,
     Progress,
     CancellationToken,
@@ -161,7 +161,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
      */
     abstract processStreamingResponse(
         responseBody: ReadableStream<Uint8Array>,
-        progress: Progress<LanguageModelResponsePart2>,
+        progress: Progress<LanguageModelResponsePart>,
         token: CancellationToken
     ): Promise<void>;
 
@@ -172,7 +172,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
      */
     protected async tryEmitBufferedToolCall(
         index: number,
-        progress: Progress<LanguageModelResponsePart2>
+        progress: Progress<LanguageModelResponsePart>
     ): Promise<void> {
         const buf = this._toolCallBuffers.get(index);
         if (!buf) {
@@ -203,7 +203,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
      * @param throwOnInvalid If true, throw when a tool call has invalid JSON args.
      */
     protected async flushToolCallBuffers(
-        progress: Progress<LanguageModelResponsePart2>,
+        progress: Progress<LanguageModelResponsePart>,
         throwOnInvalid: boolean
     ): Promise<void> {
         if (this._toolCallBuffers.size === 0) {
@@ -276,13 +276,13 @@ export abstract class CommonApi<TMessage, TRequestBody> {
      * Report to VS Code for ending thinking
      * @param progress Progress reporter for parts
      */
-    protected reportEndThinking(progress: Progress<LanguageModelResponsePart2>) {
+    protected reportEndThinking(progress: Progress<LanguageModelResponsePart>) {
         if (!this._currentThinkingId) {
             return;
         }
         try {
             this.flushThinkingBuffer(progress);
-            progress.report(new LanguageModelThinkingPart("", this._currentThinkingId));
+            progress.report(new LanguageModelThinkingPart("", this._currentThinkingId) as unknown as LanguageModelResponsePart);
         } catch (e) {
             console.error("[OpenCodeGo] Failed to end thinking sequence:", e);
         }
@@ -306,7 +306,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
      * @param text The thinking text to buffer
      * @param progress Progress reporter for parts
      */
-    protected bufferThinkingContent(text: string, progress: Progress<LanguageModelResponsePart2>): void {
+    protected bufferThinkingContent(text: string, progress: Progress<LanguageModelResponsePart>): void {
         this._hasEmittedThinking = true;
         if (!this._currentThinkingId) {
             this._currentThinkingId = this.generateThinkingId();
@@ -325,7 +325,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
      * Flush the thinking buffer to the progress reporter.
      * @param progress Progress reporter for parts.
      */
-    protected flushThinkingBuffer(progress: Progress<LanguageModelResponsePart2>): void {
+    protected flushThinkingBuffer(progress: Progress<LanguageModelResponsePart>): void {
         if (this._thinkingFlushTimer) {
             clearTimeout(this._thinkingFlushTimer);
             this._thinkingFlushTimer = null;
@@ -334,7 +334,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
         if (this._thinkingBuffer && this._currentThinkingId) {
             const text = this._thinkingBuffer;
             this._thinkingBuffer = "";
-            progress.report(new LanguageModelThinkingPart(text, this._currentThinkingId));
+            progress.report(new LanguageModelThinkingPart(text, this._currentThinkingId) as unknown as LanguageModelResponsePart);
         }
     }
 
@@ -346,7 +346,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
      */
     protected processXmlThinkBlocks(
         content: string,
-        progress: Progress<LanguageModelResponsePart2>
+        progress: Progress<LanguageModelResponsePart>
     ): { emittedAny: boolean } {
         if (!content.includes("꽁") && !content.includes("ground") && !this._xmlThinkActive) {
             return { emittedAny: false };
@@ -409,7 +409,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
      */
     protected processTextContent(
         content: string,
-        progress: Progress<LanguageModelResponsePart2>
+        progress: Progress<LanguageModelResponsePart>
     ): { emittedAny: boolean } {
         if (!content) {
             return { emittedAny: false };

@@ -90,7 +90,7 @@ export function getBuiltInModelInfos(): LanguageModelChatInformation[] {
             family: EXTENSION_LABEL,
             version: "1.0.0",
             maxInputTokens: maxInput,
-            maxOutputTokens: 0,
+            maxOutputTokens: def.maxTokens ?? DEFAULT_MAX_TOKENS,
             isUserSelectable: true,
             capabilities: {
                 toolCalling: true,

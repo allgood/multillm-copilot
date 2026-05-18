@@ -36,7 +36,7 @@
 | **图片代理 (Tool-based)** | 为不支持视觉的模型注入 `describe_image` 工具，模型可自主选择调用视觉模型（默认 Qwen3.6-Plus）描述图片，支持两轮 API 请求完成"调用工具→获取描述→继续回答"的完整流程。视觉模型 ID、描述提示词和思考模式均可通过设置配置 |
 | **Token 计数** | 使用 `o200k_base` tiktoken 分词器精确统计 token 用量 |
 | **状态栏** | 实时显示当前会话 token 使用量、累计用量、缓存命中率 |
-| **原生 Token 指示器** | 始终启用，向 Copilot Chat 原生 Token 指示器报告 token 用量。通过发送 MIME 类型为 `usage` 的 `LanguageModelDataPart` 实现，无需自建状态栏 |
+| **原生 Token 指示器** | 始终启用，向 Copilot Chat 原生 Token 指示器报告 token 用量。通过发送 MIME 类型为 `usage` 的 `LanguageModelDataPart`（TextEncoder 编码 JSON）实现，无需自建状态栏。依赖 VS Code/Copilot Chat 1.116+ 对外部模型 `usage` data part 的识别 |
 | **第三方状态栏指示器** | 可通过 `opencodego.enableThirdPartyTokenIndicator` 配置（默认开启）控制 VS Code 状态栏中的自定义 Token 计数器。关闭后仅显示原生指示器 |
 | **Git 提交消息生成** | 一键生成 Conventional Commit 格式的 Git 提交消息，支持 `auto` 语言模式自动从历史提交检测语言 |
 | **多仓库支持** | 支持多根工作区 (multi-root) 中多个 Git 仓库的提交消息生成 |
@@ -98,7 +98,7 @@
 │  │   2. 获取 API Key (SecretStorage)                             │  │
 │  │   3. 计算 Token 用量 (provideToken → statusBar)               │  │
 │  │   3b. 可选: 向 Copilot Chat 原生 Token 指示器报告用量          │  │
-│  │       (LanguageModelDataPart, MIME type "usage")               │  │
+│  │       (LanguageModelDataPart, MIME type "usage", VS Code 1.116+)│  │
 │  │   4. 应用请求延迟 (delay)                                     │  │
 │  │   5. 构建请求 → API 路由选择                                  │  │
 │  │      ├─ apiMode="openai"    → OpenaiApi                       │  │
@@ -1257,12 +1257,19 @@ type 取值：`feat` | `fix` | `refactor` | `docs` | `chore` | `improve` 等。
 ### 6.7 VS Code API 使用约束
 
 - `LanguageModelChatProvider` — 必须实现 `provideLanguageModelChatResponse()` 和 `provideLanguageModelChatInformation()`
-- `LanguageModelResponsePart2` — 使用 `LanguageModelTextPart`、`LanguageModelThinkingPart`、`LanguageModelToolCallPart`
+- `LanguageModelResponsePart` — 使用 `LanguageModelTextPart`、`LanguageModelThinkingPart`、`LanguageModelToolCallPart`、`LanguageModelDataPart`
+- `LanguageModelChatInformation.maxOutputTokens` — 必须填入模型真实输出上限，不能为 0；VS Code 原生 Token/Context Usage 指示器会在 `maxOutputTokens <= 0` 时隐藏
 - `SecretStorage` — 用于安全存储 API Key
 - `LogOutputChannel` — 用于结构化日志输出
-- `Progress<LanguageModelResponsePart2>` — 用于流式报告响应块
+- `Progress<LanguageModelResponsePart>` — 用于流式报告响应块
 
-### 6.8 错误处理策略
+### 6.8 不依赖 VS Code Proposed API
+
+- 本扩展不使用任何 `enabledApiProposals`，所有使用的 VS Code API 均为稳定版本（VS Code 1.116+）
+- `LanguageModelChatProvider`、`LanguageModelDataPart`、`LanguageModelThinkingPart` 等类型均为 VS Code 稳定 API
+- `languageModelDataPart.d.ts`、`chatProvider.d.ts`、`languageModelThinkingPart.d.ts` 等类型声明文件仅用于编译期类型补全，不影响运行时行为
+
+### 6.9 错误处理策略
 
 - 网络请求使用 `executeWithRetry()`（默认 3 次重试，指数退避）
 - API 认证失败 → 弹出输入框提示用户输入
@@ -1270,7 +1277,7 @@ type 取值：`feat` | `fix` | `refactor` | `docs` | `chore` | `improve` 等。
 - 流式解析错误 → 记录日志，继续处理（不中断流）
 - 所有未捕获错误由 `provider.ts` 的 `catch` 块统一处理
 
-### 6.9 日志规范
+### 6.10 日志规范
 
 所有日志使用 `logger` 单例，标签格式为 `category.subcategory`：
 - `request.start/end` — 请求开始/结束
@@ -1279,4 +1286,3 @@ type 取值：`feat` | `fix` | `refactor` | `docs` | `chore` | `improve` 等。
 - `commit.start/end/error` — 提交消息生成
 - `openai.stream.*` / `anthropic.stream.*` — 流式处理
 - `apiKey.missing` — API Key 缺失
-

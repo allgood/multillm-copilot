@@ -26,16 +26,13 @@
 	},
 	"version": "1.3.0",
 	"engines": {
-		"vscode": "^1.104.0"
+		"vscode": "^1.116.0"
 	},
 	"categories": [
 		"AI",
 		"Chat"
 	],
 	"license": "MIT",
-	"enabledApiProposals": [
-		"chatProvider"
-	],
 	"contributes": {
 		"languageModelChatProviders": [
 			{
@@ -281,7 +278,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "^22",
-		"@types/vscode": "^1.104.0",
+		"@types/vscode": "^1.116.0",
 		"typescript": "^5.9.2"
 	}
 }

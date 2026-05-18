@@ -2,8 +2,8 @@ import * as vscode from "vscode";
 import {
 	CancellationToken,
 	LanguageModelChatRequestMessage,
+	LanguageModelResponsePart,
 	ProvideLanguageModelChatResponseOptions,
-	LanguageModelResponsePart2,
 	Progress,
 } from "vscode";
 
@@ -287,7 +287,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 	 */
 	async processStreamingResponse(
 		responseBody: ReadableStream<Uint8Array>,
-		progress: Progress<LanguageModelResponsePart2>,
+		progress: Progress<LanguageModelResponsePart>,
 		token: CancellationToken
 	): Promise<void> {
 		const modelId = this._modelId;
@@ -365,7 +365,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 	 */
 	private async processAnthropicChunk(
 		chunk: AnthropicStreamChunk,
-		progress: Progress<LanguageModelResponsePart2>
+		progress: Progress<LanguageModelResponsePart>
 	): Promise<void> {
 		// Handle ping events (ignore)
 		if (chunk.type === "ping") {

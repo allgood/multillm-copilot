@@ -150,7 +150,7 @@ function buildModelInfos(modelIds: string[]): LanguageModelChatInformation[] {
             family: EXTENSION_LABEL_ZEN,
             version: "1.0.0",
             maxInputTokens: meta.contextLength,
-            maxOutputTokens: 0,
+            maxOutputTokens: meta.maxTokens,
             isUserSelectable: true,
             capabilities: {
                 toolCalling: true,
