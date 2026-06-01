@@ -123,6 +123,11 @@ function buildModelInfos(modelIds: string[]): LanguageModelChatInformation[] {
         }
 
         // Build reasoning effort enum based on thinking mode
+        // - "switchable" + hasEfforts: disabled / [effort levels]
+        // - "switchable" + no efforts: disabled / enabled
+        // - "adaptive"               : disabled / adaptive
+        // - "always"    + hasEfforts: [effort levels]
+        // - "always"    + no efforts: enabled
         const hasEfforts = meta.supportedReasoningEfforts && meta.supportedReasoningEfforts.length > 0;
         let enumValues: string[];
         if (hasEfforts) {
@@ -141,6 +146,7 @@ function buildModelInfos(modelIds: string[]): LanguageModelChatInformation[] {
         const enumItemLabels = enumValues.map((e) => {
             switch (e) {
                 case 'disabled': return l10n("Disabled");
+                case 'adaptive': return l10n("Adaptive");
                 case 'enabled': return l10n("Thinking");
                 case 'high': return l10n("High");
                 case 'max': return l10n("Maximum");
@@ -150,6 +156,7 @@ function buildModelInfos(modelIds: string[]): LanguageModelChatInformation[] {
         const enumDescriptions = enumValues.map((e) => {
             switch (e) {
                 case 'disabled': return l10n("Do not enable thinking");
+                case 'adaptive': return l10n("Automatically decide when to think");
                 case 'enabled': return l10n("Enable thinking");
                 case 'high': return l10n("Deeper thinking, slower response");
                 case 'max': return l10n("Maximum thinking depth, slowest response");

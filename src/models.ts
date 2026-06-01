@@ -12,8 +12,8 @@ interface BuiltInModelDef {
     displayName: string;
     /** Whether the model supports image input */
     vision: boolean;
-    /** Thinking mode: "switchable" = two variants registered, "always" = thinking forced on */
-    thinkingMode: "switchable" | "always";
+    /** Thinking mode: "switchable" = user can toggle, "always" = thinking forced on, "adaptive" = only disabled/adaptive */
+    thinkingMode: "switchable" | "always" | "adaptive";
     /** Default reasoning effort when thinking is enabled */
     defaultReasoningEffort?: string;
     /** Supported reasoning effort levels for the model picker UI */
@@ -59,10 +59,11 @@ const BUILT_IN_MODELS: BuiltInModelDef[] = [
     { baseId: "mimo-v2.5-pro", displayName: "MiMo-V2.5-Pro", vision: false, thinkingMode: "switchable", contextLength: 1000000, maxTokens: 32768 },
     { baseId: "mimo-v2.5", displayName: "MiMo-V2.5", vision: false, thinkingMode: "switchable", contextLength: 1000000, maxTokens: 32768 },
 
-    // ── MiniMax series ── 官方文档: 204800 context (204.8K) ──
-    // Note: minimax-m2.7 uses Anthropic API format (messages endpoint)
+    // ── MiniMax series ── 官方文档: M2.7/M2.5 204800 context (204.8K), M3 1M context ──
+    // Note: minimax-m2.7 and minimax-m3 use Anthropic API format (messages endpoint)
+    { baseId: "minimax-m3", displayName: "MiniMax M3", vision: false, thinkingMode: "adaptive", apiMode: "anthropic", extra: { reasoning_split: true }, contextLength: 1000000, maxTokens: 32768 },
     { baseId: "minimax-m2.7", displayName: "MiniMax M2.7", vision: false, thinkingMode: "always", apiMode: "anthropic", extra: { reasoning_split: true }, contextLength: 204800, maxTokens: 32768 },
-    { baseId: "minimax-m2.5", displayName: "MiniMax M2.5", vision: false, thinkingMode: "always", contextLength: 204800, maxTokens: 32768 },
+    { baseId: "minimax-m2.5", displayName: "MiniMax M2.5", vision: false, thinkingMode: "always", apiMode: "anthropic", contextLength: 204800, maxTokens: 32768 },
 
     // ── Qwen series ── 阿里云百炼: Qwen3.7-Max 1M context, Qwen3.6-Plus 1M context, Qwen3.5-Plus 同代同规格 ──
     // Note: Qwen 系列使用 Anthropic API 格式 (messages endpoint)
@@ -103,6 +104,11 @@ export function getBuiltInModelInfos(): LanguageModelChatInformation[] {
         };
 
         // Build enum values based on thinking mode
+        // - "switchable" + hasEfforts: disabled / [effort levels]             (e.g. disabled/high/max)
+        // - "switchable" + no efforts: disabled / enabled
+        // - "adaptive"               : disabled / adaptive                    (only two: off or auto-decide)
+        // - "always"    + hasEfforts: [effort levels]
+        // - "always"    + no efforts: enabled
         const hasEfforts = def.supportedReasoningEfforts && def.supportedReasoningEfforts.length > 0;
         let enumValues: string[];
         if (hasEfforts) {
@@ -114,6 +120,8 @@ export function getBuiltInModelInfos(): LanguageModelChatInformation[] {
         } else {
             if (def.thinkingMode === "switchable") {
                 enumValues = ["disabled", "enabled"];
+            } else if (def.thinkingMode === "adaptive") {
+                enumValues = ["disabled", "adaptive"];
             } else {
                 enumValues = ["enabled"];
             }
@@ -124,6 +132,7 @@ export function getBuiltInModelInfos(): LanguageModelChatInformation[] {
         const getLabel = (e: string): string => {
             switch (e) {
                 case 'disabled': return l10n("Disabled");
+                case 'adaptive': return l10n("Adaptive");
                 case 'enabled': return l10n("Thinking");
                 case 'low': return l10n("Low");
                 case 'medium': return l10n("Medium");
@@ -135,6 +144,7 @@ export function getBuiltInModelInfos(): LanguageModelChatInformation[] {
         const getDesc = (e: string): string => {
             switch (e) {
                 case 'disabled': return l10n("Do not enable thinking");
+                case 'adaptive': return l10n("Automatically decide when to think");
                 case 'enabled': return l10n("Enable thinking");
                 case 'low': return l10n("Reduce thinking, faster response");
                 case 'medium': return l10n("Balance thinking and speed");
