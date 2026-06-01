@@ -279,7 +279,7 @@ export function replaceDataUriImages(text: string, startIndex: number): { text: 
         count++;
         const before = result.slice(0, match.index + offset);
         const after = result.slice(match.index + offset + fullMatch.length);
-        const replacement = `[Image data from tool call (imageIndex=${idx})]`;
+        const replacement = `\n[Image data from tool call (imageIndex=${idx}). I am a text-only model and CANNOT see images directly. I MUST call the ask_image tool to learn about it.\n\nRecommended strategy:\n1. Call ask_image with query="Describe this image briefly" to get an overview.\n2. Then call ask_image again with specific questions based on what the user needs.\n]`;
         result = before + replacement + after;
         offset += replacement.length - fullMatch.length;
         idx++;

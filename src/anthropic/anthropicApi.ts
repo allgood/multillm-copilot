@@ -139,7 +139,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 									toolTexts.push(result.text);
 								}
 							} else if (!modelSupportsVision && inner instanceof vscode.LanguageModelDataPart && isImageMimeType(inner.mimeType)) {
-								toolTexts.push(`[Image data from previous tool call (imageIndex=${imageIndex})]`);
+								toolTexts.push(`\n[Image data from tool call (imageIndex=${imageIndex}). I am a text-only model and CANNOT see images directly. I MUST call the ask_image tool to learn about it.\n\nRecommended strategy:\n1. Call ask_image with query="Describe this image briefly" to get an overview.\n2. Then call ask_image again with specific questions based on what the user needs.\n]`);
 								imageIndex++;
 							}
 						}
