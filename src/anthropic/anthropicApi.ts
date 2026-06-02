@@ -30,8 +30,8 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 		super(modelId);
 	}
 
-	/** Whether images were stored during convertMessages for ask_image tool. */
-	private _hasStoredImages = false;
+	/** Whether images were found during convertMessages for ask_image tool. */
+	private _hasImages = false;
 
 	/** Accumulated input tokens from Anthropic message_start for usage reporting. */
 	private _anthropicInputTokens = 0;
@@ -50,13 +50,12 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 		const out: AnthropicMessage[] = [];
 		let imageIndex = 0;
 
-		// Collect images to store if model doesn't support vision
-		let imagesToStore: StoredImage[] | undefined;
+		// Collect images to instance-local array if model doesn't support vision
+		const imagesToStore: StoredImage[] = [];
 		if (!modelSupportsVision) {
 			for (const m of messages) {
 				for (const part of m.content ?? []) {
 					if (part instanceof vscode.LanguageModelDataPart && isImageMimeType(part.mimeType)) {
-						if (!imagesToStore) imagesToStore = [];
 						imagesToStore.push({
 							data: part.data,
 							mimeType: part.mimeType,
@@ -69,14 +68,12 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 						if (toolContent) {
 							for (const inner of toolContent) {
 								if (inner instanceof vscode.LanguageModelDataPart && isImageMimeType(inner.mimeType)) {
-									if (!imagesToStore) imagesToStore = [];
 									imagesToStore.push({
 										data: inner.data,
 										mimeType: inner.mimeType,
 									});
 								} else if (inner instanceof vscode.LanguageModelTextPart) {
 									// Scan text for base64 data URI images
-									if (!imagesToStore) imagesToStore = [];
 									storeDataUriImages(inner.value, imagesToStore);
 								}
 							}
@@ -84,16 +81,13 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 					}
 					// Scan direct text parts for base64 data URI images
 					if (part instanceof vscode.LanguageModelTextPart) {
-						if (!imagesToStore) imagesToStore = [];
 						storeDataUriImages(part.value, imagesToStore);
 					}
 				}
 			}
-			if (imagesToStore && imagesToStore.length > 0) {
-				const key = CommonApi.generateImageStoreKey();
-				CommonApi.storedImages.set(key, imagesToStore);
-				this._imageStoreKey = key;
-				this._hasStoredImages = true;
+			if (imagesToStore.length > 0) {
+				this._localImages = imagesToStore;
+				this._hasImages = true;
 			}
 		}
 
@@ -297,7 +291,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 			}
 		}
 		// Inject ask_image tool for non-vision models with stored images
-		if (this._hasStoredImages) {
+		if (this._hasImages) {
 			const def = ASK_IMAGE_TOOL_DEF as unknown as { function: { name: string; description: string; parameters: object } };
 			anthropicToolList.push({
 				name: def.function.name,
@@ -310,7 +304,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 		}
 
 		// Add tool_choice (Anthropic format)
-		if (this._hasStoredImages) {
+		if (this._hasImages) {
 			// Set to "auto" so the model can freely choose to call ask_image.
 			// The converted messages already contain strong directives telling the
 			// model it MUST use ask_image, and the tool definition is available.

@@ -78,10 +78,10 @@ export abstract class CommonApi<TMessage, TRequestBody> {
     public interceptedToolCall: InterceptedToolCall | null = null;
 
     /**
-     * Key used to retrieve stored images from CommonApi.storedImages.
-     * Set during convertMessages when images are stored for non-vision models.
+     * Locally stored images collected during convertMessages.
+     * Lives on the instance only — no global Map, automatically GC'd.
      */
-    protected _imageStoreKey: string | null = null;
+    protected _localImages: StoredImage[] = [];
 
     /**
      * Store the converted API messages so the provider can reference them
@@ -93,37 +93,8 @@ export abstract class CommonApi<TMessage, TRequestBody> {
      * Get the stored images associated with this instance, if any.
      */
     public getStoredImage(imageIndex: number): StoredImage | undefined {
-        if (!this._imageStoreKey) return undefined;
-        const images = CommonApi.storedImages.get(this._imageStoreKey);
-        if (!images || imageIndex < 0 || imageIndex >= images.length) return undefined;
-        return images[imageIndex];
-    }
-
-    /**
-     * Clean up stored images for this instance.
-     */
-    public cleanupStoredImages(): void {
-        if (this._imageStoreKey) {
-            CommonApi.storedImages.delete(this._imageStoreKey);
-            this._imageStoreKey = null;
-        }
-    }
-
-    /**
-     * Static storage for images attached to the conversation.
-     * Keyed by a unique request identifier set during convertMessages.
-     */
-    public static readonly storedImages = new Map<string, StoredImage[]>();
-
-    /** Static counter for generating unique image storage keys. */
-    private static _nextImageStoreId = 0;
-
-    /**
-     * Generate a unique key for storing images in the static map.
-     */
-    public static generateImageStoreKey(): string {
-        const id = ++CommonApi._nextImageStoreId;
-        return `req_${id}`;
+        if (imageIndex < 0 || imageIndex >= this._localImages.length) return undefined;
+        return this._localImages[imageIndex];
     }
 
     constructor(modelId: string) {

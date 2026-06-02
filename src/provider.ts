@@ -551,10 +551,10 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
     }): Promise<void> {
         const api = params.api;
         const storedMessages = (api as any)._originalApiMessages as any[] | undefined;
-        const imgKey = (api as any)._imageStoreKey as string | null;
+        const hasLocalImages = ((api as any)._localImages as any[])?.length > 0;
 
         // Nothing to proxy — no stored images
-        if (!imgKey || !CommonApi.storedImages.has(imgKey)) {
+        if (!hasLocalImages) {
             logger.debug("vision.no-stored-images", { hasStoredMessages: !!storedMessages });
             return;
         }
@@ -701,7 +701,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                             });
                         }
                     }
-                    if (imgKey && CommonApi.storedImages.has(imgKey)) {
+                    if (hasLocalImages) {
                         const def = ASK_IMAGE_TOOL_DEF as unknown as { function: { name: string; description: string; parameters: object } };
                         anthropicToolList.push({
                             name: def.function.name,
@@ -787,7 +787,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                     if (toolConfig.tools) {
                         openaiToolList.push(...toolConfig.tools);
                     }
-                    if (imgKey && CommonApi.storedImages.has(imgKey)) {
+                    if (hasLocalImages) {
                         openaiToolList.push(ASK_IMAGE_TOOL_DEF);
                     }
                     if (openaiToolList.length > 0) {

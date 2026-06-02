@@ -223,15 +223,17 @@ provideLanguageModelChatResponse(model, messages, options, progress, token)
   │
   ├── 11. 图片代理拦截处理:
   │       └── _handleInterceptedToolCall()
-  │           ├── 检查 interceptedToolCall
+  │           ├── 检查 interceptedToolCall（循环，最多 visionMaxRounds 次）
   │           ├── 发出 thinking 指示器 "Reading image..."
   │           ├── 调用 callVisionModel() 获取描述
   │           ├── 关闭 thinking 指示器
-  │           ├── 用户取消则跳过第二轮
-  │           └── 创建独立 AbortController 用于第二轮请求
-  │               ├── 保留 temperature/reasoning_effort 等原始参数
-  │               ├── Anthropic 模式额外恢复 system 和 thinking 配置
-  │               └── DeepSeek 兼容注入 reasoning_content
+  │           ├── 用户取消则跳过本轮
+  │           ├── 创建独立 AbortController 用于本轮请求
+  │           │   ├── 保留 temperature/reasoning_effort 等原始参数
+  │           │   ├── Anthropic 模式额外恢复 system 和 thinking 配置
+  │           │   └── DeepSeek 兼容注入 reasoning_content
+  │           ├── 注入工具: 本轮注入 VS Code 原生工具 + ask_image（共存）
+  │           └── 循环: 若模型再次调用 ask_image 则继续下一轮，无限追问
   │
   ├── 12. 错误处理:
   │        ├── 用户取消（token.isCancellationRequested）→ 直接重新抛出
@@ -288,43 +290,43 @@ provideLanguageModelChatResponse(model, messages, options, progress, token)
   │
   ├── 1. convertMessages()
   │      模型 vision=false，有 image → 替换为 "[The user sent an image (imageIndex=N)... I MUST call the ask_image tool...]"
-  │      原图数据存入 CommonApi.storedImages 静态池
+  │      原图数据存入实例的 _localImages 数组
   │      同时递归扫描 tool result 内嵌的图片一并存入
-  │      记录 _hasStoredImages = true，保存 _originalApiMessages
+  │      记录 _hasImages = true，保存 _originalApiMessages
   │
   ├── 2. prepareRequestBody()
-  │      有 stored images → 注入 ask_image 工具定义到 tools 列表
+  │      有 _localImages → 注入 ask_image 工具定义到 tools 列表
   │      设置 tool_choice = "auto"（DeepSeek 等模型拒绝强制 tool_choice）
   │
-  ├── 3. 第一次 API 请求（含 ask_image 工具）
+  ├── 3. 第一次 API 请求（含 ask_image + VS Code 原生工具）
   │      └── 模型自主决定是否调用 ask_image
   │
   ├── 4. processDelta() / processAnthropicChunk() 拦截
   │      ask_image 被缓存到 interceptedToolCall（不在 progress 中发出）
   │      tryEmitBufferedToolCall() 和 flushToolCallBuffers() 同时跳过 ask_image
   │
-  ├── 5. provider._handleInterceptedToolCall() 处理
-  │      ├── 读取设置: visionProxyModel (默认 qwen3.6-plus)
-  │      │              visionProxyThinking (默认 false)
-  │      ├── 发出 LanguageModelThinkingPart("Reading image...")
-  │      ├── 使用模型的具体 query 调用 callVisionModel()
-  │      │   └── 发送图片 + 查询到视觉模型，收集流式回答
-  │      ├── 发出 LanguageModelThinkingPart(" done") + 关闭 thinking
-  │      └── 构建第二轮消息（assistant tool_call + tool result）
-  │
-  └── 6. 第二次 API 请求
-         ├── 复制 _originalApiMessages + 追加 assistant(tool_calls) + tool(result)
-         ├── 保留 temperature、reasoning_effort 等参数
-         ├── DeepSeek 兼容: assistant 消息中注入 reasoning_content
-         └── 流式输出最终回答到 progress
+  └── 5. _handleInterceptedToolCall() 循环（多轮追问）
+         for round = 1 to visionMaxRounds:
+           ├── 读取 interceptedToolCall
+           ├── 发出 LanguageModelThinkingPart("Reading image...")
+           ├── 使用模型的具体 query 调用 callVisionModel()
+           │   └── 发送图片 + 查询到视觉模型，收集流式回答
+           ├── 关闭 thinking
+           ├── 构建本轮消息: 追加 assistant(tool_call) + tool(result)
+           ├── 注入工具: VS Code 原生工具 + ask_image（两者共存）
+           ├── 发送 API 请求并流式处理
+           ├── 若模型再次调用 ask_image → 继续循环
+           └── 若模型未调 ask_image → 结束
 ```
 
-#### 第二轮请求特点
+#### 多轮请求特点
 
-- **OpenAI 模式**: 使用 `tool_calls` + `tool` role 消息格式构建第二轮
-- **Anthropic 模式**: 使用 `tool_use` + `tool_result` content block 格式构建第二轮
-- **参数保留**: 第二轮保留 temperature、top_p、thinking 模式等原始参数
-- **绕过工具注入**: 第二轮不注入工具定义（减少 token 消耗）
+- **支持无限追问**: 模型拿到图片描述后可以继续调用 ask_image 追问细节（最多 `visionMaxRounds` 次，默认 5）
+- **工具共存**: 每轮同时注入 VS Code 原生工具（read_file 等）+ ask_image，模型可混合使用
+- **图片数据生命周期**: 图片存于 API 实例的 `_localImages` 数组，请求结束后随实例 GC 自动回收
+- **OpenAI 模式**: 使用 `tool_calls` + `tool` role 消息格式构建每轮
+- **Anthropic 模式**: 使用 `tool_use` + `tool_result` content block 格式构建每轮
+- **参数保留**: 每轮保留 temperature、top_p、thinking 模式等原始参数
 - **DeepSeek 兼容**: 对 DeepSeek 模型的 assistant tool_call 消息注入 reasoning_content 字段
 
 ### 2.6 Git 提交消息生成流程
@@ -405,7 +407,7 @@ src/
 | 文件 | 行数 | 职责 |
 |------|------|------|
 | `extension.ts` | ~210 | 扩展激活/停用，注册 Provider 和 6 条命令，首次安装欢迎页引导 |
-| `provider.ts` | ~670 | 实现 `LanguageModelChatProvider`，处理聊天请求全流程及图片代理第二轮处理 |
+| `provider.ts` | ~700 | 实现 `LanguageModelChatProvider`，处理聊天请求全流程及图片代理多轮循环处理 |
 | `models.ts` | ~225 | 16 个内置模型定义，模型配置查询（所有模型声明 `imageInput: true`） |
 | `types.ts` | ~95 | `OpenCodeGoModelItem`, `ModelPreset`, `ModelsResponse`, `RetryConfig` 等类型 |
 | `commonApi.ts` | ~458 | `CommonApi<TMessage,TRequestBody>` 抽象基类（图片存储、工具调用拦截） |
@@ -470,11 +472,11 @@ src/
 核心方法：处理聊天请求，流式返回响应。包括模型配置获取（内置模型 → Zen 模型回退）、API Key 验证、推理力度应用、temperature/top_p 注入（模型预设或自定义设置）、延迟控制、超时管理、API 路由、流式解析、图片代理拦截处理和错误处理。错误处理区分三种情况：用户取消（直接重新抛出原始错误）、超时（友好超时提示）、连接被终止（友好终止提示）。
 
 #### `private async _handleInterceptedToolCall(params): Promise<void>`
-处理图片代理拦截。检测 API 实例的 `interceptedToolCall`，读取设置 `opencodego.visionProxyModel`/`visionProxyThinking`，发出 thinking 指示器，使用模型的具体 query 调用 `callVisionModel()` 获取答案，构建第二轮 API 请求（assistant tool_call + tool result），保留 temperature/reasoning_effort 等原始参数，DeepSeek 兼容注入 `reasoning_content`。
+处理图片代理拦截。循环处理最多 `opencodego.visionMaxRounds` 轮（默认 5）。每轮检测 API 实例的 `interceptedToolCall`，发出 thinking 指示器，使用模型的具体 query 调用 `callVisionModel()` 获取答案，构建本轮 API 请求（追加 assistant tool_call + tool result），注入 VS Code 原生工具 + ask_image 供模型继续使用，保留 temperature/reasoning_effort 等原始参数，DeepSeek 兼容注入 `reasoning_content`。模型不再调用 ask_image 时退出循环。
 
-- 视觉模型调用期间用户取消则跳过第二轮。
-- 构建第二轮前清除第一轮超时定时器，避免误中断。
-- 创建独立 AbortController 用于第二轮 fetch，带独立超时。
+- 视觉模型调用期间用户取消则跳过本轮。
+- 每轮创建独立 AbortController，带独立超时。
+- 每轮注入 VS Code 原生工具 + ask_image，确保模型可以混合使用。
 - Anthropic 模式额外恢复 `system` 内容（`_systemContent`）和 `thinking` 参数。
 
 #### `private async ensureApiKey(): Promise<string | undefined>`
@@ -589,10 +591,8 @@ API 实现的抽象基类。
 | `_modelId` | `string` | 模型 ID |
 | `_onUsage` | `((usage: StreamUsage) => void) \| undefined` | 用量回调 |
 | `interceptedToolCall` | `InterceptedToolCall \| null` | 被拦截的 ask_image 工具调用 |
-| `_imageStoreKey` | `string \| null` | 当前实例的图片存储键 |
-| `_originalApiMessages` | `any[] \| null` | 转换后的原始 API 消息，用于构建第二轮请求 |
-| `storedImages` | `Map<string, StoredImage[]>`（静态） | 请求图片数据暂存池 |
-| `generateImageStoreKey()` | `string`（静态） | 生成唯一的图片存储键 |
+| `_localImages` | `StoredImage[]` | 实例局部图片数据，请求结束随 GC 回收 |
+| `_originalApiMessages` | `any[] \| null` | 转换后的原始 API 消息，用于构建多轮请求 |
 
 #### `abstract convertMessages(messages, modelConfig): TMessage[]`
 将 VS Code 聊天消息转换为特定 API 格式的消息数组。modelConfig 新增 `vision` 字段，非视觉模型时自动替换图片为文本引用并存储图片数据。
@@ -610,10 +610,7 @@ API 实现的抽象基类。
 清空所有工具调用缓冲区，发射剩余的工具调用。拦截 `ask_image` 存入 `interceptedToolCall`。
 
 #### `public getStoredImage(imageIndex): StoredImage | undefined`
-从静态 `storedImages` 池中按索引获取存储的图片数据。
-
-#### `public cleanupStoredImages(): void`
-清理此实例的存储图片。
+从实例的 `_localImages` 数组中按索引获取存储的图片数据。
 
 #### `protected adjustReadFileParameters(toolName, parameters): Record<string, unknown>`
 调整 `read_file` 工具的参数，根据配置自动扩增读取行数。

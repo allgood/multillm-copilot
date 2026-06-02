@@ -40,14 +40,14 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
     }
 
     /**
-     * Whether images were stored during convertMessages for ask_image tool.
+     * Whether images were found during convertMessages for ask_image tool.
      */
-    private _hasStoredImages = false;
+    private _hasImages = false;
 
     /**
      * Convert VS Code chat request messages into OpenAI-compatible message objects.
      * For non-vision models, images are replaced with text references and stored
-     * in the static CommonApi.storedImages map for the ask_image tool.
+     * in instance-local _localImages for the ask_image tool.
      */
     convertMessages(
         messages: readonly LanguageModelChatRequestMessage[],
@@ -57,13 +57,12 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
         const out: OpenAIChatMessage[] = [];
         let imageIndex = 0;
 
-        // Collect images to store if model doesn't support vision
-        let imagesToStore: StoredImage[] | undefined;
+        // Collect images to instance-local array if model doesn't support vision
+        const imagesToStore: StoredImage[] = [];
         if (!modelSupportsVision) {
             for (const m of messages) {
                 for (const part of m.content ?? []) {
                     if (part instanceof vscode.LanguageModelDataPart && isImageMimeType(part.mimeType)) {
-                        if (!imagesToStore) imagesToStore = [];
                         imagesToStore.push({
                             data: part.data,
                             mimeType: part.mimeType,
@@ -76,14 +75,12 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                         if (toolContent) {
                             for (const inner of toolContent) {
                                 if (inner instanceof vscode.LanguageModelDataPart && isImageMimeType(inner.mimeType)) {
-                                    if (!imagesToStore) imagesToStore = [];
                                     imagesToStore.push({
                                         data: inner.data,
                                         mimeType: inner.mimeType,
                                     });
                                 } else if (inner instanceof vscode.LanguageModelTextPart) {
                                     // Scan text for base64 data URI images
-                                    if (!imagesToStore) imagesToStore = [];
                                     storeDataUriImages(inner.value, imagesToStore);
                                 }
                             }
@@ -91,16 +88,13 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                     }
                     // Scan direct text parts for base64 data URI images
                     if (part instanceof vscode.LanguageModelTextPart) {
-                        if (!imagesToStore) imagesToStore = [];
                         storeDataUriImages(part.value, imagesToStore);
                     }
                 }
             }
-            if (imagesToStore && imagesToStore.length > 0) {
-                const key = CommonApi.generateImageStoreKey();
-                CommonApi.storedImages.set(key, imagesToStore);
-                this._imageStoreKey = key;
-                this._hasStoredImages = true;
+            if (imagesToStore.length > 0) {
+                this._localImages = imagesToStore;
+                this._hasImages = true;
             }
         }
 
@@ -316,13 +310,13 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
             toolsList.push(...toolConfig.tools);
         }
         // Inject ask_image tool for non-vision models with stored images
-        if (this._hasStoredImages) {
+        if (this._hasImages) {
             toolsList.push(ASK_IMAGE_TOOL_DEF);
         }
         if (toolsList.length > 0) {
             rb.tools = toolsList;
         }
-        if (this._hasStoredImages) {
+        if (this._hasImages) {
             // Set to "auto" so the model can freely choose to call ask_image.
             // Some providers (DeepSeek) reject forced function tool_choice.
             // The converted messages already contain strong directives telling the
