@@ -16,7 +16,7 @@ import type { ModelPreset, OpenCodeGoModelItem } from "./types";
 
 import { createRetryConfig, executeWithRetry, convertToolsToOpenAI } from "./utils";
 
-import { prepareLanguageModelChatInformation } from "./provideModel";
+import { prepareLanguageModelChatInformation, getAutoDiscoveredModelConfig } from "./provideModel";
 import { getBuiltInModelConfig } from "./models";
 import { getZenFreeModelConfig } from "./zen/zenModels";
 import { l10nFormat } from "./localize";
@@ -168,11 +168,14 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
         let dispatchFetch: typeof fetch;
 
         try {
-            // Get built-in model config (with fallback to Zen free model config)
+            // Get built-in model config (with fallback to Zen free model config, then auto-discovered)
             const config = vscode.workspace.getConfiguration();
             let um: OpenCodeGoModelItem | undefined = getBuiltInModelConfig(model.id);
             if (!um) {
                 um = getZenFreeModelConfig(model.id);
+            }
+            if (!um) {
+                um = getAutoDiscoveredModelConfig(model.id);
             }
 
             // Apply reasoning effort from model configuration to determine thinking mode

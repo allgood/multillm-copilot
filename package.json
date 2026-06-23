@@ -238,6 +238,11 @@
 					"default": false,
 					"description": "%config.enableZenFreeModels.desc%"
 				},
+				"opencodego.enableAutoModelDiscovery": {
+					"type": "boolean",
+					"default": true,
+				"description": "%config.enableAutoModelDiscovery.desc%"
+				},
 				"opencodego.modelPresets": {
 					"type": "array",
 					"default": [

@@ -27,7 +27,8 @@
 | 能力 | 说明 |
 |------|------|
 | **Chat 模型提供商** | 实现 `LanguageModelChatProvider` 接口，向 VS Code 注册为 `opencodego` 厂商 |
-| **多模型支持** | 内置 17 个模型定义，覆盖 6 大模型系列，统一通过推理强度选择器切换思考模式。可选开启 OpenCode Zen 免费模型（6 个） |
+| **多模型支持** | 内置 17 个模型定义，覆盖 6 大模型系列，统一通过推理强度选择器切换思考模式。可选开启 OpenCode Zen 免费模型（8 个）。支持自动模型发现：开启后从 API 获取模型列表，自动过滤不可用模型并发现新增模型 |
+| **自动模型发现** | 通过 `opencodego.enableAutoModelDiscovery` 配置（默认开启）。启动时从 `/zen/go/v1/models` 获取当前可用模型 ID 列表，过滤内置模型列表（不可用模型自动隐藏）。新增模型从 `models.dev` 数据库获取元数据（上下文长度、视觉能力、工具调用等）并自动添加，默认 `thinkingMode="always"`。API 不可用时静默回退到全量内置列表。内存缓存（5 分钟 TTL） |
 | **OpenCode Zen 免费模型** | 通过设置开关启用，从 Zen API 获取模型列表并过滤出 6 个免费模型（Big Pickle、DeepSeek V4 Flash、MiniMax M3、MiniMax M2.5、Ring 2.6 1T、Nemotron 3 Super），以 `OpenCode Zen` 标识追加到模型选择器。支持内存缓存（5 分钟 TTL），API 不可用时静默降级 |
 | **双 API 模式** | 同时支持 **OpenAI 兼容格式** (`/chat/completions`) 和 **Anthropic 格式** (`/v1/messages`) |
 | **流式推理** | 支持 SSE (Server-Sent Events) 流式响应，实时输出文本和工具调用 |
@@ -50,6 +51,8 @@
 | **安装欢迎页 (Walkthrough)** | 首次安装且未配置 API Key 时自动打开引导向导，指引用户设置 API Key 和打开语言模型管理器。包含 3 个步骤：设置 API Key、显示模型、高级设置。通过 `onStartupFinished` 激活事件确保在 VS Code 启动后立即检测 |
 
 ### 1.3 模型清单
+
+> **自动模型发现**（默认开启）会从 API 获取当前可用模型列表，自动隐藏不在列表中的内置模型，并从 models.dev 自动添加 API 返回的新模型。以下为全量内置模型定义，实际显示情况取决于 API 可用性。
 
 #### 内置模型
 
@@ -158,6 +161,7 @@ provideLanguageModelChatResponse(model, messages, options, progress, token)
   │       格式: "baseId"（无 :: 后缀）
   │       所有模型注册为单一条目
   │       内置模型查找失败时回退到 getZenFreeModelConfig(model.id)
+  │       再失败时回退到 getAutoDiscoveredModelConfig(model.id)
   │
   ├── 2. 应用用户配置的 reasoningEffort
   │       ├── "disabled" → 关闭思考（always 模型除外）
@@ -365,17 +369,19 @@ generateCommitMsg(secrets, scm?)
 
 ```
 src/
-├── extension.ts                          # 扩展入口 (activate/deactivate)
-├── provider.ts                           # Chat 模型提供商 (核心主文件)
-├── models.ts                             # 内置模型定义清单
-├── types.ts                              # TypeScript 类型定义
+├── apiModelList.ts                       # API 模型列表获取
 ├── commonApi.ts                          # API 抽象基类
-├── provideModel.ts                       # 模型信息提供函数
-├── provideToken.ts                       # Token 计数函数
-├── utils.ts                              # 通用工具函数
-├── statusBar.ts                          # 状态栏管理
-├── logger.ts                             # 日志系统
+├── extension.ts                          # 扩展入口 (activate/deactivate)
 ├── localize.ts                           # 国际化/本地化
+├── logger.ts                             # 日志系统
+├── models.ts                             # 内置模型定义清单
+├── modelsDev.ts                          # models.dev 元数据拉取与查询
+├── provideModel.ts                       # 模型信息提供函数（含自动发现）
+├── provider.ts                           # Chat 模型提供商 (核心主文件)
+├── provideToken.ts                       # Token 计数函数
+├── statusBar.ts                          # 状态栏管理
+├── types.ts                              # TypeScript 类型定义
+├── utils.ts                              # 通用工具函数
 ├── versionManager.ts                     # 版本信息管理
 ├── openai/
 │   ├── openaiApi.ts                      # OpenAI 兼容 API 实现
@@ -412,8 +418,10 @@ src/
 | `provider.ts` | ~700 | 实现 `LanguageModelChatProvider`，处理聊天请求全流程及图片代理多轮循环处理 |
 | `models.ts` | ~230 | 17 个内置模型定义，模型配置查询（所有模型声明 `imageInput: true`） |
 | `types.ts` | ~95 | `OpenCodeGoModelItem`, `ModelPreset`, `ModelsResponse`, `RetryConfig` 等类型 |
+| `apiModelList.ts` | ~80 | API 模型列表获取：从 `/zen/go/v1/models` 拉取可用模型 ID，5 分钟缓存，静默降级 |
+| `modelsDev.ts` | ~130 | models.dev 元数据拉取与查询：从 `models.dev/models.json` 下载并索引模型规格，支持短 ID 匹配，1 小时缓存 |
 | `commonApi.ts` | ~462 | `CommonApi<TMessage,TRequestBody>` 抽象基类（图片存储、工具调用拦截） |
-| `provideModel.ts` | ~25 | 模型信息获取 |
+| `provideModel.ts` | ~130 | 模型信息提供函数（含自动发现）：过滤内置模型、从 API 和 models.dev 自动发现新增模型 |
 | `provideToken.ts` | ~100 | Token 用量计算 |
 | `utils.ts` | ~285 | 工具函数 (重试、角色映射、工具转换等) |
 | `statusBar.ts` | ~140 | 状态栏创建、更新、累计计数器 |
@@ -471,7 +479,7 @@ src/
 计算文本或消息的 Token 数量。委托给 `countMessageTokens()`。
 
 #### `provideLanguageModelChatResponse(model, messages, options, progress, token): Promise<void>`
-核心方法：处理聊天请求，流式返回响应。包括模型配置获取（内置模型 → Zen 模型回退）、API Key 验证、推理力度应用、temperature/top_p 注入（模型预设或自定义设置）、延迟控制、超时管理、API 路由、流式解析、图片代理拦截处理和错误处理。错误处理区分三种情况：用户取消（直接重新抛出原始错误）、超时（友好超时提示）、连接被终止（友好终止提示）。
+核心方法：处理聊天请求，流式返回响应。包括模型配置获取（内置模型 → Zen 模型回退 → 自动发现回退）、API Key 验证、推理力度应用、temperature/top_p 注入（模型预设或自定义设置）、延迟控制、超时管理、API 路由、流式解析、图片代理拦截处理和错误处理。错误处理区分三种情况：用户取消（直接重新抛出原始错误）、超时（友好超时提示）、连接被终止（友好终止提示）。
 
 #### `private async _handleInterceptedToolCall(params): Promise<void>`
 处理图片代理拦截。循环处理最多 `opencodego.visionMaxRounds` 轮（默认 5）。每轮检测 API 实例的 `interceptedToolCall`，发出 thinking 块显示“正在根据图片提问：[问题]”，关闭 thinking 块后视觉模型输出以普通文本流式显示。单图调用 `callVisionModel()`，多图调用 `callVisionModelMulti()`，构建本轮 API 请求（追加 assistant tool_call + tool result），注入 VS Code 原生工具 + ask_image（+ ask_with_multi_image 当 >=2 图时）供模型继续使用，保留 temperature/reasoning_effort 等原始参数，DeepSeek 兼容注入 `reasoning_content`。模型不再调用 ask_image/ask_with_multi_image 时退出循环。
@@ -648,10 +656,36 @@ API 实现的抽象基类。
 
 ---
 
-### 4.6 `src/provideModel.ts`
+### 4.6 `src/apiModelList.ts`
+
+#### `getApiModelIds(apiKey): Promise<Set<string>>`
+从 `/zen/go/v1/models` 拉取可用模型 ID 列表并返回 Set。使用内存缓存（5 分钟 TTL），API 不可用时返回空 Set 或上次缓存。导出 `isApiFetchSuccessful()` 检查上次请求是否成功。
+
+#### `isApiFetchSuccessful(): boolean`
+返回最近一次 API 模型列表拉取是否成功。用于模型提供者决定是否应用 API 过滤。
+
+---
+
+### 4.7 `src/modelsDev.ts`
+
+#### `interface ModelsDevEntry`
+`{ id, name?, family?, reasoning?, tool_call?, structured_output?, temperature?, attachment?, modalities?, limit? }` — models.dev 数据库中单个模型条目的接口。
+
+#### `ensureModelsDevLoaded(): Promise<void>`
+从 `https://models.dev/models.json` 下载完整模型目录并构建内存索引（完整 ID → 条目 + 短 ID → 条目）。1 小时缓存 TTL，失败时静默保留旧缓存。首次无缓存时初始化为空 Map。
+
+#### `lookupModelDevEntry(apiModelId): ModelsDevEntry | undefined`
+按 API 模型 ID 查找 models.dev 元数据。匹配策略：1) 完整 models.dev ID 精确匹配，2) 短 ID（斜杠后最后一段）匹配，3) 后缀匹配。
+
+---
+
+### 4.10 `src/provideModel.ts`
 
 #### `prepareLanguageModelChatInformation(options, _token, _secrets): Promise<LanguageModelChatInformation[]>`
-获取模型信息列表。默认使用硬编码的内置模型列表（委托 `getBuiltInModelInfos()`）。当配置 `opencodego.enableZenFreeModels` 开启时，额外调用 `getZenFreeModelInfos()` 获取 Zen 免费模型并追加到列表末尾。Zen 模型获取失败时静默降级（不阻塞模型选择器）。
+获取模型信息列表。默认使用硬编码的内置模型列表（委托 `getBuiltInModelInfos()`）。当配置 `opencodego.enableAutoModelDiscovery` 开启时（默认），从 API 获取可用模型 ID 列表，过滤内置模型（仅保留 API 中存在的模型），并从 models.dev 自动发现新增模型（默认 `thinkingMode="always"`）。API 不可用时静默回退到全量内置列表。当配置 `opencodego.enableZenFreeModels` 开启时，额外调用 `getZenFreeModelInfos()` 获取 Zen 免费模型并追加到列表末尾。
+
+#### `getAutoDiscoveredModelConfig(modelId): OpenCodeGoModelItem | undefined`
+返回之前自动发现的模型配置。由 `provider.ts` 在 `getBuiltInModelConfig()` 和 `getZenFreeModelConfig()` 都返回 undefined 时作为第三回退调用。
 
 ---
 
