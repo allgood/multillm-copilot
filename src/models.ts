@@ -43,8 +43,9 @@ const BUILT_IN_MODELS: BuiltInModelDef[] = [
     // ── GLM series ── Zhipu GLM 官方文档: https://docs.bigmodel.cn/cn/guide/start/model-overview ──
     // GLM-5.2: 1M context / 128K max output (新品, 开源 SOTA Coding)
     // GLM-5.1/GLM-4.7: 200K context / 128K max output
-    // Note: GLM 系列不支持推理/思考功能，因此 thinkingMode 设为 "always" 以隐藏思考切换选项
-    { baseId: "glm-5.2", displayName: "GLM-5.2", vision: false, thinkingMode: "always", contextLength: 1000000, maxTokens: 131072 },
+    // Note: GLM-5.2 支持推理/思考功能，可通过 reasoning_effort 设置思考强度 (high/max)
+    // GLM-5.1/GLM-5 不支持推理/思考功能，因此 thinkingMode 设为 "always" 以隐藏思考切换选项
+    { baseId: "glm-5.2", displayName: "GLM-5.2", vision: false, thinkingMode: "switchable", defaultReasoningEffort: "high", supportedReasoningEfforts: ["high", "max"], contextLength: 1000000, maxTokens: 131072 },
     { baseId: "glm-5.1", displayName: "GLM-5.1", vision: false, thinkingMode: "always", contextLength: 200000, maxTokens: 131072 },
     { baseId: "glm-5", displayName: "GLM-5", vision: false, thinkingMode: "always", contextLength: 200000, maxTokens: 131072 },
 
