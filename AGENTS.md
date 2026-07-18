@@ -59,9 +59,9 @@
 | 系列 | 模型 ID | 视觉 | 推理强度选择器 | API 格式 |
 |------|---------|------|----------------|----------|
 | GLM | `glm-5.2`, `glm-5.1`, `glm-5` | ❌ | `禁用思考` / `高` / `最大` (5.2)² / `思考`（5.1/5 不支持思考切换） | OpenAI |
-| Kimi | `kimi-k2.5`, `kimi-k2.6`, `kimi-k2.7-code`¹ | ✅ | `思考`（不支持思考切换） | OpenAI |
+| Kimi | `kimi-k3`¹, `kimi-k2.5`, `kimi-k2.6`, `kimi-k2.7-code`¹ | ✅ | `禁用思考` / `思考`（K3）；`思考`（K2.x，不支持思考切换） | OpenAI |
 
-> ¹ `kimi-k2.7-code` 不支持设置 Temperature 参数。  
+> ¹ `kimi-k3` 和 `kimi-k2.7-code` 不支持设置 Temperature/Top-p 参数。
 > ² GLM-5.2 支持通过 reasoning_effort 设置 thinking 强度 (high/max)，GLM-5.1/GLM-5 不支持 thinking 切换。
 | DeepSeek | `deepseek-v4-pro`, `deepseek-v4-flash` | ❌ | `禁用思考` / `高` / `极高` | OpenAI |
 | MiMo | `mimo-v2-pro`, `mimo-v2-omni`, `mimo-v2.5-pro`, `mimo-v2.5` | mimo-v2-omni ✅ | `禁用思考` / `思考` | OpenAI |
