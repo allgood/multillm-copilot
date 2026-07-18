@@ -1,19 +1,14 @@
 import * as vscode from "vscode";
-import { OpenCodeGoChatModelProvider } from "./provider";
+import { MultiLLMChatModelProvider } from "./provider";
 import { initStatusBar } from "./statusBar";
 import { logger } from "./logger";
 import { l10n, l10nFormat } from "./localize";
 import type { ModelPreset } from "./types";
 import { abortCommitGeneration, generateCommitMsg } from "./gitCommit/commitMessageGenerator";
 import { TokenizerManager } from "./tokenizer/tokenizerManager";
-
-// ---- Walkthrough / Welcome constants ----
-
-/** memento key tracking whether the welcome walkthrough has been shown. */
-const WELCOME_SHOWN_KEY = "opencodego.welcomeShown";
-
-/** Walkthrough contribution ID (publisher.extension#walkthroughId). */
-const WALKTHROUGH_ID = "OnesoftQwQ.opencode-go-copilot-provider#opencodeGoGettingStarted";
+import { getProviders, getProviderApiKey, storeProviderApiKey, deleteProviderApiKey } from "./providers";
+import { manageProvidersCommand } from "./providerEditor";
+import type { ProviderConfig } from "./types";
 
 export function activate(context: vscode.ExtensionContext) {
     // Initialize logger
@@ -23,94 +18,105 @@ export function activate(context: vscode.ExtensionContext) {
     TokenizerManager.initialize(context.extensionPath);
 
     const tokenCountStatusBarItem: vscode.StatusBarItem = initStatusBar(context);
-    const provider = new OpenCodeGoChatModelProvider(context.secrets, tokenCountStatusBarItem);
+    const provider = new MultiLLMChatModelProvider(context.secrets, tokenCountStatusBarItem);
 
-    // Register the OpenCode Go provider under the vendor id used in package.json
-    vscode.lm.registerLanguageModelChatProvider("opencodego", provider);
+    // Register the Multi-LLM provider under the vendor id used in package.json
+    vscode.lm.registerLanguageModelChatProvider("multiLLM", provider);
 
-    // Helper: check if an API key is stored (without prompting)
-    const hasApiKey = async (): Promise<boolean> => {
-        const key = await context.secrets.get("opencodego.apiKey");
-        return !!key;
-    };
+    // ── API Key management ──────────────────────────────────────────
 
-    // Management command to configure API key
+    // Set API key for a chosen provider
     context.subscriptions.push(
-        vscode.commands.registerCommand("opencodego.setApiKey", async () => {
-            const existing = await context.secrets.get("opencodego.apiKey");
+        vscode.commands.registerCommand("multiLLM.setApiKey", async () => {
+            const providers = getProviders();
+            if (providers.length === 0) {
+                vscode.window.showInformationMessage(l10n("No providers configured. Add providers in settings."));
+                return;
+            }
+
+            const items = providers.map((p) => ({
+                label: p.label,
+                description: p.baseUrl,
+                providerId: p.id,
+            }));
+
+            const picked = await vscode.window.showQuickPick(items, {
+                title: l10n("Select Provider"),
+                placeHolder: l10n("Choose a provider to set API key for"),
+                ignoreFocusOut: true,
+            });
+            if (!picked) { return; }
+
+            const existing = await getProviderApiKey(picked.providerId, context.secrets);
             const apiKey = await vscode.window.showInputBox({
-                title: l10n("OpenCode Go Provider API Key"),
-                prompt: existing ? l10n("Update your OpenCode Go API key") : l10n("Enter your OpenCode Go API key"),
+                title: l10nFormat("{0} API Key", picked.label),
+                prompt: existing ? l10n("Update your API key") : l10n("Enter your API key"),
                 ignoreFocusOut: true,
                 password: true,
                 value: existing ?? "",
             });
-            if (apiKey === undefined) {
-                return; // user canceled
-            }
+            if (apiKey === undefined) { return; }
             if (!apiKey.trim()) {
-                await context.secrets.delete("opencodego.apiKey");
-                vscode.window.showInformationMessage(l10n("OpenCode Go API key cleared."));
+                await deleteProviderApiKey(picked.providerId, context.secrets);
+                vscode.window.showInformationMessage(l10nFormat("{0} API key cleared.", picked.label));
                 return;
             }
-            await context.secrets.store("opencodego.apiKey", apiKey.trim());
-            vscode.window.showInformationMessage(l10n("OpenCode Go API key saved."));
-        })
-    );
-
-    // Command to open the OpenCode Go website to get an API key
-    context.subscriptions.push(
-        vscode.commands.registerCommand("opencodego.getApiKey", () => {
-            vscode.env.openExternal(vscode.Uri.parse("https://opencode.ai/auth"));
+            await storeProviderApiKey(picked.providerId, apiKey.trim(), context.secrets);
+            vscode.window.showInformationMessage(l10nFormat("{0} API key saved.", picked.label));
         })
     );
 
     // Command to open extension settings
     context.subscriptions.push(
-        vscode.commands.registerCommand("opencodego.openSettings", () => {
-            vscode.commands.executeCommand("workbench.action.openSettings", "@ext:OnesoftQwQ.opencode-go-copilot-provider");
+        vscode.commands.registerCommand("multiLLM.openSettings", () => {
+            vscode.commands.executeCommand("workbench.action.openSettings", "@ext:allgood.multi-llm-copilot-provider");
         })
     );
 
-    // Register the generateGitCommitMessage command handler
+    // Command to manage providers via GUI
     context.subscriptions.push(
-        vscode.commands.registerCommand("opencodego.generateGitCommitMessage", async (scm) => {
+        vscode.commands.registerCommand("multiLLM.manageProviders", () => {
+            manageProvidersCommand(context.secrets);
+        })
+    );
+
+    // ── Git commit message generation ────────────────────────────────
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("multiLLM.generateGitCommitMessage", async (scm) => {
             generateCommitMsg(context.secrets, scm);
         }),
-        vscode.commands.registerCommand("opencodego.abortGitCommitMessage", () => {
+        vscode.commands.registerCommand("multiLLM.abortGitCommitMessage", () => {
             abortCommitGeneration();
         })
     );
 
-    // Register the setModelPreset command: user can select a preset via QuickPick
+    // ── Model preset selection ───────────────────────────────────────
+
     context.subscriptions.push(
-        vscode.commands.registerCommand("opencodego.setModelPreset", async () => {
+        vscode.commands.registerCommand("multiLLM.setModelPreset", async () => {
             const config = vscode.workspace.getConfiguration();
-            const presets = config.get<ModelPreset[]>("opencodego.modelPresets", []);
-            const currentPresetId = config.get<string>("opencodego.modelPreset", "custom");
-            const currentTemp = config.get<number | null>("opencodego.temperature", null);
-            const currentTopP = config.get<number | null>("opencodego.top_p", null);
+            const presets = config.get<ModelPreset[]>("multiLLM.modelPresets", []);
+            const currentPresetId = config.get<string>("multiLLM.modelPreset", "custom");
+            const currentTemp = config.get<number | null>("multiLLM.temperature", null);
+            const currentTopP = config.get<number | null>("multiLLM.top_p", null);
 
             interface PresetQuickPickItem extends vscode.QuickPickItem {
                 presetId?: string;
             }
 
-            // Mark the currently active preset with " (当前)"
             const presetItems: PresetQuickPickItem[] = presets.map((p) => ({
                 label: `${l10n(p.label)} (${p.temperature})${p.id === currentPresetId ? l10n(" (current)") : ""}`,
                 presetId: p.id,
             }));
 
-            // Mark custom option with current values if active
             const isCustomActive = currentPresetId === "custom";
             const customLabel = "$(pencil) " + l10n("Custom (manual input)")
                 + (isCustomActive
                     ? ` ${l10nFormat("(current, temperature: {0}, top_p: {1})", String(currentTemp ?? "—"), String(currentTopP ?? "—"))}`
                     : "");
 
-            const customItem: PresetQuickPickItem = {
-                label: customLabel,
-            };
+            const customItem: PresetQuickPickItem = { label: customLabel };
 
             const items: PresetQuickPickItem[] = [
                 ...presetItems,
@@ -118,32 +124,26 @@ export function activate(context: vscode.ExtensionContext) {
                 customItem,
             ];
 
-            const title = l10n("Set Model Preset");
-
             const picked = await vscode.window.showQuickPick(items, {
-                title,
+                title: l10n("Set Model Preset"),
                 placeHolder: l10n("Select a preset"),
                 ignoreFocusOut: true,
             });
 
-            if (!picked) {
-                return;
-            }
+            if (!picked) { return; }
 
             const presetId = picked.presetId;
 
             if (presetId) {
-                // User selected a named preset
                 const matchedPreset = presets.find((p) => p.id === presetId);
                 if (matchedPreset) {
-                    await config.update("opencodego.modelPreset", matchedPreset.id, vscode.ConfigurationTarget.Global);
-                    await config.update("opencodego.temperature", matchedPreset.temperature, vscode.ConfigurationTarget.Global);
+                    await config.update("multiLLM.modelPreset", matchedPreset.id, vscode.ConfigurationTarget.Global);
+                    await config.update("multiLLM.temperature", matchedPreset.temperature, vscode.ConfigurationTarget.Global);
                     vscode.window.showInformationMessage(
                         l10nFormat("Set to temperature: {0} ({1})", String(matchedPreset.temperature), l10n(matchedPreset.label))
                     );
                 }
             } else {
-                // User chose "Custom (manual input)"
                 const currentVal = currentTemp !== null && currentTopP !== null
                     ? `${currentTemp},${currentTopP}`
                     : "";
@@ -178,11 +178,11 @@ export function activate(context: vscode.ExtensionContext) {
                     const trimmed = inputValue.trim();
                     const parts = trimmed.split(",");
                     const tempNum = parseFloat(parts[0].trim());
-                    await config.update("opencodego.modelPreset", "custom", vscode.ConfigurationTarget.Global);
-                    await config.update("opencodego.temperature", tempNum, vscode.ConfigurationTarget.Global);
+                    await config.update("multiLLM.modelPreset", "custom", vscode.ConfigurationTarget.Global);
+                    await config.update("multiLLM.temperature", tempNum, vscode.ConfigurationTarget.Global);
                     if (parts.length === 2) {
                         const topPNum = parseFloat(parts[1].trim());
-                        await config.update("opencodego.top_p", topPNum, vscode.ConfigurationTarget.Global);
+                        await config.update("multiLLM.top_p", topPNum, vscode.ConfigurationTarget.Global);
                         vscode.window.showInformationMessage(
                             l10nFormat("Set to temp: {0}, top_p: {1} (custom)", String(tempNum), String(topPNum))
                         );
@@ -196,36 +196,10 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Show welcome walkthrough on first install (when no API key is configured)
-    showWelcomeIfNeeded(context);
-
     // Dispose logger on deactivate
     context.subscriptions.push({
         dispose: () => logger.dispose(),
     });
-}
-
-/**
- * Show the welcome walkthrough on first activation if no API key is configured.
- * Once shown (or if a key already exists) the flag is persisted so it won't
- * reappear after subsequent reloads.
- */
-async function showWelcomeIfNeeded(context: vscode.ExtensionContext): Promise<void> {
-    try {
-        if (context.globalState.get<boolean>(WELCOME_SHOWN_KEY)) {
-            return;
-        }
-        const apiKey = await context.secrets.get("opencodego.apiKey");
-        if (apiKey) {
-            // API key already set — no need to show welcome
-            await context.globalState.update(WELCOME_SHOWN_KEY, true);
-            return;
-        }
-        await vscode.commands.executeCommand("workbench.action.openWalkthrough", WALKTHROUGH_ID, false);
-        await context.globalState.update(WELCOME_SHOWN_KEY, true);
-    } catch (error) {
-        logger.warn("Failed to show welcome walkthrough", { error: String(error) });
-    }
 }
 
 export function deactivate() { }

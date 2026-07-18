@@ -1,9 +1,11 @@
 MIT License
 
-Copyright (c) 2026 OnesoftQwQ
+Copyright (c) 2026 Claudemir Todo Bom
 
-This project includes code derived from oai-compatible-copilot
-(https://github.com/JohnnyZ93/oai-compatible-copilot),
+This project includes code derived from [opencode-copilot](https://github.com/OnesoftQwQ/opencode-go-copilot),
+Copyright (c) 2026 OnesoftQwQ, also under the MIT License.
+
+This project includes code derived from [oai-compatible-copilot](https://github.com/JohnnyZ93/oai-compatible-copilot),
 Copyright (c) 2025 Johnny Zhao, also under the MIT License.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

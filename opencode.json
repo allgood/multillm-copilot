@@ -1,0 +1,42 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "notreve": {
+      "api": "openai",
+      "options": {
+        "baseURL": "https://api.ia.notreve.com.br/v1"
+      },
+      "models": {
+        "notreve-v1-lite": {
+          "name": "Notreve V1 Lite",
+          "limit": { "context": 100000, "output": 100000 },
+          "attachment": false,
+          "reasoning": false,
+          "tool_call": true
+        },
+        "notreve-v1-pro": {
+          "name": "Notreve V1 Pro",
+          "limit": { "context": 200000, "output": 200000 },
+          "attachment": false,
+          "reasoning": false,
+          "tool_call": true
+        },
+        "notreve-v1-code": {
+          "name": "Notreve V1 Code",
+          "limit": { "context": 100000, "output": 100000 },
+          "attachment": false,
+          "reasoning": false,
+          "tool_call": true
+        },
+        "notreve-v1-code-pro": {
+          "name": "Notreve V1 Code Pro",
+          "limit": { "context": 200000, "output": 200000 },
+          "attachment": false,
+          "reasoning": true,
+          "tool_call": true
+        }
+      }
+    }
+  },
+  "model": "notreve/notreve-v1-code-pro"
+}

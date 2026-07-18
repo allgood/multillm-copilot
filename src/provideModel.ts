@@ -1,44 +1,15 @@
 import * as vscode from "vscode";
 import { CancellationToken, LanguageModelChatInformation, PrepareLanguageModelChatModelOptions } from "vscode";
-
-import { logger } from "./logger";
-import { getBuiltInModelInfos } from "./models";
-import { getZenFreeModelInfos } from "./zen/zenModels";
-
-const EXTENSION_LABEL = "OpenCodeGo";
+import { getAllModelInfos } from "./providers";
 
 /**
  * Get the list of available language models contributed by this provider.
- * When the "opencodego.enableZenFreeModels" setting is enabled, OpenCode Zen
- * free models are fetched and appended to the built-in model list.
+ * Models are sourced from all enabled providers in the multiLLM.providers config.
  */
 export async function prepareLanguageModelChatInformation(
-    options: PrepareLanguageModelChatModelOptions,
+    _options: PrepareLanguageModelChatModelOptions,
     _token: CancellationToken,
-    _secrets: vscode.SecretStorage
+    secrets: vscode.SecretStorage
 ): Promise<LanguageModelChatInformation[]> {
-    // Use built-in hardcoded model list
-    const infos = getBuiltInModelInfos();
-
-    // Conditionally append Zen free models
-    const config = vscode.workspace.getConfiguration();
-    const enableZen = config.get<boolean>("opencodego.enableZenFreeModels", false);
-    if (enableZen) {
-        try {
-            const zenInfos = await getZenFreeModelInfos(_secrets);
-            if (zenInfos.length > 0) {
-                infos.push(...zenInfos);
-                logger.info("models.loaded", { count: zenInfos.length, source: "zen" });
-            }
-        } catch (error) {
-            // Silently degrade: if Zen model fetch fails, just use built-in models
-            logger.error("models.loaded", {
-                source: "zen",
-                error: error instanceof Error ? error.message : String(error),
-            });
-        }
-    }
-
-    logger.info("models.loaded", { count: infos.length, source: "total" });
-    return infos;
+    return getAllModelInfos(secrets);
 }

@@ -1,5 +1,61 @@
 /**
- * A single model entry for OpenCode Go.
+ * Provider configuration from user settings.
+ */
+export interface ProviderConfig {
+    /** Unique provider ID (e.g. "openai", "anthropic", "opencode-go") */
+    id: string;
+    /** Display label for the provider */
+    label: string;
+    /** Base URL for the API endpoint */
+    baseUrl: string;
+    /** API format mode */
+    apiMode?: "openai" | "anthropic" | "auto";
+    /** API key (shallow reference — real key in SecretStorage) */
+    apiKey?: string;
+    /** Model picker group label */
+    group?: string;
+    /** Static model definitions (optional if using modelsBaseUrl) */
+    models?: ProviderModelDef[];
+    /** URL to fetch model list dynamically (GET /v1/models) */
+    modelsBaseUrl?: string;
+    /** Custom HTTP headers */
+    headers?: Record<string, string>;
+    /** Whether this provider is enabled */
+    enabled?: boolean;
+    /** Per-provider request delay in ms */
+    delay?: number;
+}
+
+/**
+ * A model definition inside a provider config.
+ */
+export interface ProviderModelDef {
+    /** Model ID sent to the API */
+    id: string;
+    /** Display name in model picker */
+    name: string;
+    /** Whether the model supports image input */
+    vision: boolean;
+    /** Thinking mode */
+    thinkingMode: "switchable" | "always" | "adaptive";
+    /** Default context length */
+    contextLength?: number;
+    /** Default max output tokens */
+    maxOutputTokens?: number;
+    /** Supported reasoning effort levels */
+    supportedReasoningEfforts?: string[];
+    /** Default reasoning effort */
+    defaultReasoningEffort?: string;
+    /** Per-model API mode override */
+    apiMode?: "openai" | "anthropic";
+    /** Whether to include reasoning in request */
+    includeReasoningInRequest?: boolean;
+    /** Extra body parameters */
+    extra?: Record<string, unknown>;
+}
+
+/**
+ * A single model entry for Multi-LLM.
  */
 export interface OpenCodeGoModelItem {
     id: string;

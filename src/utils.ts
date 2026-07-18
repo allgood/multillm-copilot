@@ -139,7 +139,7 @@ export function convertToolsToOpenAI(
  * Create retry configuration from VS Code settings.
  */
 export function createRetryConfig(): RetryConfig {
-    const config = vscode.workspace.getConfiguration("opencodego.retry");
+    const config = vscode.workspace.getConfiguration("multiLLM.retry");
     const enabled = config.get<boolean>("enabled", true);
     const maxAttempts = config.get<number>("max_attempts", RETRY_MAX_ATTEMPTS);
     const intervalMs = config.get<number>("interval_ms", RETRY_INTERVAL_MS);

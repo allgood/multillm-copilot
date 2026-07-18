@@ -1,8 +1,8 @@
 {
-	"name": "opencode-go-copilot-provider",
-	"publisher": "OnesoftQwQ",
-	"displayName": "OpenCode Go Provider for Copilot",
-	"description": "Integrate OpenCode Go models into GitHub Copilot Chat",
+	"name": "multi-llm-copilot-provider",
+	"publisher": "allgood",
+	"displayName": "Multi-LLM Provider for Copilot",
+	"description": "Use any LLM provider (OpenAI, Anthropic, or custom endpoints) in GitHub Copilot Chat",
 	"icon": "assets/logo.png",
 	"keywords": [
 		"ai",
@@ -11,7 +11,8 @@
 		"github-copilot",
 		"language-model",
 		"llm",
-		"opencode",
+		"openai",
+		"anthropic",
 		"openai-compatible",
 		"thinking",
 		"git-commit"
@@ -24,7 +25,7 @@
 	"bugs": {
 		"url": "https://github.com/OnesoftQwQ/opencode-go-copilot/issues"
 	},
-	"version": "1.7.2",
+	"version": "1.0.0-alpha1",
 	"engines": {
 		"vscode": "^1.116.0"
 	},
@@ -39,109 +40,273 @@
 	"contributes": {
 		"languageModelChatProviders": [
 			{
-				"vendor": "opencodego",
+				"vendor": "multiLLM",
 				"displayName": "%providerDisplayName%",
-				"managementCommand": "opencodego.setApiKey"
+				"managementCommand": "multiLLM.setApiKey"
 			}
 		],
 		"commands": [
 			{
-				"command": "opencodego.setApiKey",
+				"command": "multiLLM.setApiKey",
 				"category": "%commandCategory%",
 				"title": "%command.setApiKey%"
 			},
 			{
-				"command": "opencodego.getApiKey",
-				"category": "%commandCategory%",
-				"title": "%command.getApiKey%"
-			},
-			{
-				"command": "opencodego.openSettings",
+				"command": "multiLLM.openSettings",
 				"category": "%commandCategory%",
 				"title": "%command.openSettings%"
 			},
 			{
-				"command": "opencodego.generateGitCommitMessage",
+				"command": "multiLLM.generateGitCommitMessage",
 				"title": "%command.generateCommit%",
 				"category": "%commandCategory%",
 				"icon": "$(wand)"
 			},
 			{
-				"command": "opencodego.abortGitCommitMessage",
+				"command": "multiLLM.abortGitCommitMessage",
 				"title": "%command.abortCommit%",
 				"category": "%commandCategory%",
 				"icon": "$(debug-stop)"
 			},
 			{
-				"command": "opencodego.setModelPreset",
+				"command": "multiLLM.setModelPreset",
 				"category": "%commandCategory%",
 				"title": "%command.setModelPreset%"
-			}
-		],
-		"walkthroughs": [
+			},
 			{
-				"id": "opencodeGoGettingStarted",
-				"title": "%walkthrough.title%",
-				"description": "%walkthrough.description%",
-				"steps": [
-					{
-						"id": "setApiKey",
-						"title": "%walkthrough.setApiKey.title%",
-						"description": "%walkthrough.setApiKey.description%",
-						"media": {
-							"markdown": "resources/walkthrough/set-api-key.md"
-						},
-						"completionEvents": [
-							"onCommand:opencodego.setApiKey"
-						]
-					},
-					{
-						"id": "showModels",
-						"title": "%walkthrough.showModels.title%",
-						"description": "%walkthrough.showModels.description%",
-						"media": {
-							"markdown": "resources/walkthrough/show-models.md"
-						}
-					},
-					{
-						"id": "advancedSettings",
-						"title": "%walkthrough.advancedSettings.title%",
-						"description": "%walkthrough.advancedSettings.description%",
-						"media": {
-							"markdown": "resources/walkthrough/advanced-settings.md"
-						}
-					}
-				]
+				"command": "multiLLM.manageProviders",
+				"category": "%commandCategory%",
+				"title": "%command.manageProviders%"
 			}
 		],
 		"menus": {
 			"scm/title": [
 				{
-					"command": "opencodego.generateGitCommitMessage",
+					"command": "multiLLM.generateGitCommitMessage",
 					"group": "navigation",
-					"when": "config.git.enabled && scmProvider == git && !opencodego.isGeneratingCommit"
+					"when": "config.git.enabled && scmProvider == git && !multiLLM.isGeneratingCommit"
 				},
 				{
-					"command": "opencodego.abortGitCommitMessage",
+					"command": "multiLLM.abortGitCommitMessage",
 					"group": "navigation",
-					"when": "config.git.enabled && scmProvider == git && opencodego.isGeneratingCommit"
+					"when": "config.git.enabled && scmProvider == git && multiLLM.isGeneratingCommit"
 				}
 			],
 			"commandPalette": [
 				{
-					"command": "opencodego.generateGitCommitMessage",
-					"when": "config.git.enabled && !opencodego.isGeneratingCommit"
+					"command": "multiLLM.generateGitCommitMessage",
+					"when": "config.git.enabled && !multiLLM.isGeneratingCommit"
 				},
 				{
-					"command": "opencodego.abortGitCommitMessage",
-					"when": "config.git.enabled && opencodego.isGeneratingCommit"
+					"command": "multiLLM.abortGitCommitMessage",
+					"when": "config.git.enabled && multiLLM.isGeneratingCommit"
 				}
 			]
 		},
 		"configuration": {
 			"title": "%config.title%",
 			"properties": {
-				"opencodego.commitLanguage": {
+				"multiLLM.providers": {
+					"type": "array",
+					"default": [
+						{
+							"id": "opencode-go",
+							"label": "OpenCode Go",
+							"baseUrl": "https://opencode.ai/zen/go/v1/",
+							"apiMode": "openai",
+							"group": "OpenCode Go",
+							"enabled": true,
+							"models": [
+								{
+									"id": "glm-5.1",
+									"name": "GLM-5.1",
+									"vision": false,
+									"thinkingMode": "always",
+									"contextLength": 200000,
+									"maxOutputTokens": 131072
+								},
+								{
+									"id": "glm-5",
+									"name": "GLM-5",
+									"vision": false,
+									"thinkingMode": "always",
+									"contextLength": 200000,
+									"maxOutputTokens": 131072
+								},
+								{
+									"id": "kimi-k2.5",
+									"name": "Kimi K2.5",
+									"vision": true,
+									"thinkingMode": "always",
+									"contextLength": 262144,
+									"maxOutputTokens": 16384
+								},
+								{
+									"id": "kimi-k2.6",
+									"name": "Kimi K2.6",
+									"vision": true,
+									"thinkingMode": "always",
+									"contextLength": 262144,
+									"maxOutputTokens": 16384
+								},
+								{
+									"id": "kimi-k2.7-code",
+									"name": "Kimi K2.7",
+									"vision": true,
+									"thinkingMode": "always",
+									"contextLength": 262144,
+									"maxOutputTokens": 16384
+								},
+								{
+									"id": "deepseek-v4-pro",
+									"name": "DeepSeek V4 Pro",
+									"vision": false,
+									"thinkingMode": "switchable",
+									"defaultReasoningEffort": "max",
+									"supportedReasoningEfforts": ["high", "max"],
+									"contextLength": 1000000,
+									"maxOutputTokens": 393216
+								},
+								{
+									"id": "deepseek-v4-flash",
+									"name": "DeepSeek V4 Flash",
+									"vision": false,
+									"thinkingMode": "switchable",
+									"defaultReasoningEffort": "max",
+									"supportedReasoningEfforts": ["high", "max"],
+									"contextLength": 1000000,
+									"maxOutputTokens": 393216
+								},
+								{
+									"id": "mimo-v2-pro",
+									"name": "MiMo-V2-Pro",
+									"vision": false,
+									"thinkingMode": "always",
+									"contextLength": 262144,
+									"maxOutputTokens": 32768
+								},
+								{
+									"id": "mimo-v2-omni",
+									"name": "MiMo-V2-Omni",
+									"vision": true,
+									"thinkingMode": "always",
+									"contextLength": 262144,
+									"maxOutputTokens": 32768
+								},
+								{
+									"id": "mimo-v2.5-pro",
+									"name": "MiMo-V2.5-Pro",
+									"vision": false,
+									"thinkingMode": "switchable",
+									"contextLength": 1000000,
+									"maxOutputTokens": 32768
+								},
+								{
+									"id": "mimo-v2.5",
+									"name": "MiMo-V2.5",
+									"vision": false,
+									"thinkingMode": "switchable",
+									"contextLength": 1000000,
+									"maxOutputTokens": 32768
+								},
+								{
+									"id": "minimax-m3",
+									"name": "MiniMax M3",
+									"vision": true,
+									"thinkingMode": "adaptive",
+									"apiMode": "anthropic",
+									"extra": {"reasoning_split": true},
+									"contextLength": 1000000,
+									"maxOutputTokens": 32768
+								},
+								{
+									"id": "minimax-m2.7",
+									"name": "MiniMax M2.7",
+									"vision": false,
+									"thinkingMode": "always",
+									"apiMode": "anthropic",
+									"extra": {"reasoning_split": true},
+									"contextLength": 204800,
+									"maxOutputTokens": 32768
+								},
+								{
+									"id": "minimax-m2.5",
+									"name": "MiniMax M2.5",
+									"vision": false,
+									"thinkingMode": "always",
+									"apiMode": "anthropic",
+									"contextLength": 204800,
+									"maxOutputTokens": 32768
+								},
+								{
+									"id": "qwen3.7-max",
+									"name": "Qwen3.7 Max",
+									"vision": false,
+									"thinkingMode": "switchable",
+									"apiMode": "anthropic",
+									"contextLength": 1000000,
+									"maxOutputTokens": 65536
+								},
+								{
+									"id": "qwen3.7-plus",
+									"name": "Qwen3.7 Plus",
+									"vision": true,
+									"thinkingMode": "switchable",
+									"apiMode": "anthropic",
+									"contextLength": 1000000,
+									"maxOutputTokens": 65536
+								},
+								{
+									"id": "qwen3.6-plus",
+									"name": "Qwen3.6 Plus",
+									"vision": true,
+									"thinkingMode": "switchable",
+									"apiMode": "anthropic",
+									"contextLength": 1000000,
+									"maxOutputTokens": 32768
+								},
+								{
+									"id": "qwen3.5-plus",
+									"name": "Qwen3.5 Plus",
+									"vision": true,
+									"thinkingMode": "switchable",
+									"apiMode": "anthropic",
+									"contextLength": 1000000,
+									"maxOutputTokens": 32768
+								}
+							]
+						},
+						{
+							"id": "openai",
+							"label": "OpenAI",
+							"baseUrl": "https://api.openai.com/v1/",
+							"apiMode": "openai",
+							"group": "OpenAI",
+							"enabled": false,
+							"modelsBaseUrl": "https://api.openai.com/v1"
+						},
+						{
+							"id": "anthropic",
+							"label": "Anthropic",
+							"baseUrl": "https://api.anthropic.com/",
+							"apiMode": "anthropic",
+							"group": "Anthropic",
+							"enabled": false,
+							"models": [
+								{
+									"id": "claude-sonnet-4-20250514",
+									"name": "Claude Sonnet 4",
+									"vision": true,
+									"thinkingMode": "switchable",
+									"contextLength": 200000,
+									"maxOutputTokens": 8192
+								}
+							]
+						}
+					],
+					"description": "%config.providers.desc%"
+				},
+				"multiLLM.commitLanguage": {
 					"type": "string",
 					"default": "auto",
 					"enum": [
@@ -180,65 +345,60 @@
 					],
 					"description": "%config.commitLanguage.desc%"
 				},
-				"opencodego.commitModel": {
+				"multiLLM.commitModel": {
 					"type": "string",
-					"default": "deepseek-v4-flash",
+					"default": "opencode-go:deepseek-v4-flash",
 					"description": "%config.commitModel.desc%"
 				},
-				"opencodego.commitMessagePrompt": {
+				"multiLLM.commitMessagePrompt": {
 					"type": "string",
 					"default": "",
 					"description": "%config.commitMessagePrompt.desc%"
 				},
-				"opencodego.requestTimeout": {
+				"multiLLM.requestTimeout": {
 					"type": "number",
 					"default": 600000,
 					"minimum": 10000,
 					"description": "%config.requestTimeout.desc%"
 				},
-				"opencodego.recentCommitsCount": {
+				"multiLLM.recentCommitsCount": {
 					"type": "number",
 					"default": 10,
 					"minimum": 0,
 					"maximum": 50,
 					"description": "%config.recentCommitsCount.desc%"
 				},
-				"opencodego.commitIncludeCommitDiff": {
+				"multiLLM.commitIncludeCommitDiff": {
 					"type": "boolean",
 					"default": false,
 					"description": "%config.commitIncludeCommitDiff.desc%"
 				},
-				"opencodego.commitAttachContextFiles": {
+				"multiLLM.commitAttachContextFiles": {
 					"type": "boolean",
 					"default": true,
 					"description": "%config.commitAttachContextFiles.desc%"
 				},
-				"opencodego.modelPreset": {
+				"multiLLM.modelPreset": {
 					"type": "string",
 					"default": "precise",
 					"description": "%config.modelPreset.desc%",
 					"editPresentation": "singlelineText"
 				},
-				"opencodego.temperature": {
+				"multiLLM.temperature": {
 					"type": "number",
 					"default": null,
 					"minimum": 0,
 					"maximum": 2,
 					"description": "%config.temperature.desc%"
 				},
-				"opencodego.top_p": {
+				"multiLLM.top_p": {
 					"type": "number",
 					"default": null,
 					"minimum": 0,
 					"maximum": 1,
 					"description": "%config.top_p.desc%"
 				},
-				"opencodego.enableZenFreeModels": {
-					"type": "boolean",
-					"default": false,
-					"description": "%config.enableZenFreeModels.desc%"
-				},
-				"opencodego.modelPresets": {
+				"multiLLM.modelPresets": {
 					"type": "array",
 					"default": [
 						{
@@ -264,11 +424,7 @@
 					],
 					"items": {
 						"type": "object",
-						"required": [
-							"id",
-							"label",
-							"temperature"
-						],
+						"required": ["id", "label", "temperature"],
 						"properties": {
 							"id": {
 								"type": "string",
@@ -290,17 +446,17 @@
 					},
 					"description": "%config.modelPresets.desc%"
 				},
-				"opencodego.visionProxyModel": {
+				"multiLLM.visionProxyModel": {
 					"type": "string",
-					"default": "qwen3.6-plus",
+					"default": "opencode-go:qwen3.6-plus",
 					"description": "%config.visionProxyModel.desc%"
 				},
-				"opencodego.visionProxyThinking": {
+				"multiLLM.visionProxyThinking": {
 					"type": "boolean",
 					"default": false,
 					"description": "%config.visionProxyThinking.desc%"
 				},
-				"opencodego.enableThirdPartyTokenIndicator": {
+				"multiLLM.enableThirdPartyTokenIndicator": {
 					"type": "boolean",
 					"default": true,
 					"description": "%config.enableThirdPartyTokenIndicator.desc%"

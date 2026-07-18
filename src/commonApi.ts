@@ -201,7 +201,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
             const parsed = tryParseJSONObject(argsText);
             if (!parsed.ok) {
                 if (throwOnInvalid) {
-                    console.error("[OpenCodeGo] Invalid JSON for tool call", {
+                    console.error("[MultiLLM] Invalid JSON for tool call", {
                         idx,
                         snippet: (buf.args || "").slice(0, 200),
                     });
@@ -230,7 +230,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
             return parameters;
         }
         const config = vscode.workspace.getConfiguration();
-        const defaultLines = config.get<number>("opencodego.readFileLines", 0);
+        const defaultLines = config.get<number>("multiLLM.readFileLines", 0);
         if (defaultLines <= 0) {
             return parameters;
         }
@@ -255,7 +255,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
             this.flushThinkingBuffer(progress);
             progress.report(new LanguageModelThinkingPart("", this._currentThinkingId) as unknown as LanguageModelResponsePart);
         } catch (e) {
-            console.error("[OpenCodeGo] Failed to end thinking sequence:", e);
+            console.error("[MultiLLM] Failed to end thinking sequence:", e);
         }
         this._currentThinkingId = null;
         this._thinkingBuffer = "";
@@ -403,7 +403,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
     ): Record<string, string> {
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
-            "User-Agent": "ai-sdk/openai-compatible/2.0.41 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.11",
+            "User-Agent": "multi-llm-copilot-provider/1.0.0",
             "Accept": "*/*",
             "Accept-Encoding": "gzip, deflate, br, zstd",
         };

@@ -267,6 +267,8 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
         }
 
         // Thinking mode (OpenAI-compatible format: {"thinking": {"type": "enabled"}})
+        // Only send thinking param when model explicitly enables it.
+        // Models that don't support thinking get no thinking field at all.
         if (um?.enable_thinking === true) {
             if (um?.reasoning_effort === 'adaptive') {
                 rb.thinking = { type: "adaptive" };
@@ -276,8 +278,6 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                     (rb.thinking as Record<string, unknown>).budget_tokens = um.thinking_budget;
                 }
             }
-        } else {
-            rb.thinking = { type: "disabled" };
         }
 
         // OpenRouter/OpenCode Go reasoning configuration

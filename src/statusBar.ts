@@ -15,7 +15,7 @@ export function initStatusBar(context: vscode.ExtensionContext): vscode.StatusBa
     resetCumulativeCounters();
 
     const tokenCountStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    tokenCountStatusBarItem.name = l10n("Token Count");
+    tokenCountStatusBarItem.name = l10n("Token Usage");
     tokenCountStatusBarItem.text = `$(symbol-numeric) ${l10n("Ready")}`;
     tokenCountStatusBarItem.tooltip = l10n("Current model token usage");
     context.subscriptions.push(tokenCountStatusBarItem);

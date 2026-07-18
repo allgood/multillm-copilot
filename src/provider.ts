@@ -17,8 +17,7 @@ import type { ModelPreset, OpenCodeGoModelItem } from "./types";
 import { createRetryConfig, executeWithRetry, convertToolsToOpenAI } from "./utils";
 
 import { prepareLanguageModelChatInformation } from "./provideModel";
-import { getBuiltInModelConfig } from "./models";
-import { getZenFreeModelConfig } from "./zen/zenModels";
+import { getModelConfig, parseCompositeModelId, getProviderApiKey, storeProviderApiKey } from "./providers";
 import { l10nFormat } from "./localize";
 import { countMessageTokens, textTokenLength } from "./provideToken";
 import { updateContextStatusBar, recordUsage, updateCumulativeTooltip, updateStatusBarWithApiPrompt } from "./statusBar";
@@ -36,12 +35,7 @@ import { l10n } from "./localize";
  * Native Copilot Token Indicator
  *
  * Reports token usage to the Copilot Chat's built-in token indicator by emitting
- * a LanguageModelDataPart with MIME type 'usage'. Copilot Chat intercepts this
- * part and displays it in the native UI element, just like GitHub Copilot's own
- * models do.
- *
- * This is always active. The separate Advanced Token indicator can be
- * controlled via the "opencodego.enableThirdPartyTokenIndicator" setting.
+ * a LanguageModelDataPart with MIME type 'usage'.
  */
 function reportNativeUsage(
     usage: StreamUsage,
@@ -57,7 +51,7 @@ function reportNativeUsage(
                     cached_tokens: usage.cacheHitTokens ?? 0,
                 },
             })),
-            'usage'
+            "usage"
         )
     );
 }
@@ -79,29 +73,24 @@ function getRequestedReasoningEffort(options: ProvideLanguageModelChatResponseOp
 }
 
 /**
- * VS Code Chat provider backed by OpenCode Go API.
+ * VS Code Chat provider backed by user-configured multi-provider APIs.
  */
-export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
+export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
     /** Track last request completion time for delay calculation. */
     private _lastRequestTime: number | null = null;
 
-    /**
-     * Create a provider using the given secret storage for the API key.
-     */
     constructor(
         private readonly secrets: vscode.SecretStorage,
         private readonly statusBarItem: vscode.StatusBarItem
     ) { }
 
     /**
-     * Create an undici fetch function with custom bodyTimeout to prevent premature
-     * connection termination during long streaming responses.
-     * Falls back to global fetch if undici is unavailable.
+     * Create an undici fetch function with custom bodyTimeout.
      */
     private _createFetchWithTimeout(requestTimeoutMs: number): typeof fetch {
         try {
             // eslint-disable-next-line @typescript-eslint/no-require-imports
-            const undici = require(path.join(vscode.env.appRoot, 'node_modules', 'undici'));
+            const undici = require(path.join(vscode.env.appRoot, "node_modules", "undici"));
             const agent = new undici.Agent({ bodyTimeout: requestTimeoutMs });
             return (url: RequestInfo | URL, init?: RequestInit) => {
                 return undici.fetch(url, { ...init, dispatcher: agent });
@@ -111,9 +100,6 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
         }
     }
 
-    /**
-     * Get the list of available language models contributed by this provider.
-     */
     async provideLanguageModelChatInformation(
         options: PrepareLanguageModelChatModelOptions,
         _token: CancellationToken
@@ -121,9 +107,6 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
         return prepareLanguageModelChatInformation(options, _token, this.secrets);
     }
 
-    /**
-     * Returns the number of tokens for a given text using the model specific tokenizer logic.
-     */
     async provideTokenCount(
         _model: LanguageModelChatInformation,
         text: string | LanguageModelChatRequestMessage,
@@ -132,9 +115,6 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
         return countMessageTokens(text, { includeReasoningInRequest: true });
     }
 
-    /**
-     * Returns the response for a chat request, passing the results to the progress callback.
-     */
     async provideLanguageModelChatResponse(
         model: LanguageModelChatInformation,
         messages: readonly LanguageModelChatRequestMessage[],
@@ -152,7 +132,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                     }
                     progress.report(part);
                 } catch (e) {
-                    console.error("[OpenCodeGo] Progress.report failed", {
+                    console.error("[MultiLLM] Progress.report failed", {
                         modelId: model.id,
                         error: e instanceof Error ? { name: e.name, message: e.message } : String(e),
                     });
@@ -161,24 +141,18 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
         };
         const requestStartTime = Date.now();
 
-        // Timeout controller (declared outside try so accessible in catch/finally)
         let abortController = new AbortController();
         let requestTimeoutMs = 600000;
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
         let dispatchFetch: typeof fetch;
 
         try {
-            // Get built-in model config (with fallback to Zen free model config)
             const config = vscode.workspace.getConfiguration();
-            let um: OpenCodeGoModelItem | undefined = getBuiltInModelConfig(model.id);
-            if (!um) {
-                um = getZenFreeModelConfig(model.id);
-            }
 
-            // Apply reasoning effort from model configuration to determine thinking mode
-            // - "disabled" → turn off thinking (unless model has thinkingMode="always")
-            // - "enabled" → turn on thinking with default effort
-            // - "high"/"max" → turn on thinking with specified effort
+            // Resolve model config from provider system
+            const um = getModelConfig(model.id);
+
+            // Apply reasoning effort
             if (um) {
                 const effort = getRequestedReasoningEffort(options);
                 if (effort) {
@@ -198,33 +172,35 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 }
             }
 
-            // Inject temperature & top_p from model preset or custom settings
+            // Inject temperature & top_p from presets or custom settings
             if (um) {
-                const tempPreset = config.get<string>("opencodego.modelPreset", "custom");
+                const tempPreset = config.get<string>("multiLLM.modelPreset", "custom");
                 if (tempPreset !== "custom") {
-                    const presets = config.get<ModelPreset[]>("opencodego.modelPresets", []);
+                    const presets = config.get<ModelPreset[]>("multiLLM.modelPresets", []);
                     const matchedPreset = presets.find((p) => p.id === tempPreset);
                     if (matchedPreset) {
                         um.temperature = matchedPreset.temperature;
                     }
                 } else {
-                    const userTemperature = config.get<number | null>("opencodego.temperature", null);
+                    const userTemperature = config.get<number | null>("multiLLM.temperature", null);
                     if (userTemperature !== null) {
                         um.temperature = userTemperature;
                     }
-                    const userTopP = config.get<number | null>("opencodego.top_p", null);
+                    const userTopP = config.get<number | null>("multiLLM.top_p", null);
                     if (userTopP !== null) {
                         um.top_p = userTopP;
                     } else {
-                        // Keep top_p undefined so the model uses its default
                         um.top_p = undefined;
                     }
                 }
             }
 
-            // Determine API mode from model config (default: openai)
+            // Determine API mode and base URL from model config
             const apiMode = um?.apiMode || "openai";
-            const baseUrl = um?.baseUrl || "https://opencode.ai/zen/go/v1/";
+            const baseUrl = um?.baseUrl;
+            if (!baseUrl || !baseUrl.startsWith("http")) {
+                throw new Error(l10n("Invalid base URL configuration."));
+            }
 
             logger.info("request.start", {
                 modelId: model.id,
@@ -239,15 +215,15 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 vision: um?.vision ?? false,
             };
 
-            // Read Advanced Token indicator setting
-            const enableThirdPartyIndicator = config.get<boolean>("opencodego.enableThirdPartyTokenIndicator", true);
+            // Advanced Token indicator setting
+            const enableThirdPartyIndicator = config.get<boolean>("multiLLM.enableThirdPartyTokenIndicator", true);
 
-            // Calculate client-side token estimate for fallback (also updates Advanced Token indicator if enabled)
+            // Calculate client-side token estimate
             const estimatedInputTokens = await updateContextStatusBar(messages, options.tools, model, this.statusBarItem, modelConfig);
 
             // Apply delay between consecutive requests
             const modelDelay = um?.delay;
-            const globalDelay = config.get<number>("opencodego.delay", 0);
+            const globalDelay = config.get<number>("multiLLM.delay", 0);
             const delayMs = modelDelay !== undefined ? modelDelay : globalDelay;
 
             if (delayMs > 0 && this._lastRequestTime !== null) {
@@ -256,35 +232,27 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                     const remainingDelay = delayMs - elapsed;
                     logger.debug("request.delay", { delayMs, elapsed, remainingDelay });
                     await new Promise<void>((resolve) => {
-                        const timeout = setTimeout(() => {
-                            clearTimeout(timeout);
-                            resolve();
-                        }, remainingDelay);
+                        const timeout = setTimeout(() => { clearTimeout(timeout); resolve(); }, remainingDelay);
                     });
                 }
             }
 
-            // Get API key
-            const modelApiKey = await this.ensureApiKey();
+            // Get API key for this model's provider
+            const { providerId } = parseCompositeModelId(model.id);
+            const modelApiKey = await this.getModelApiKey(providerId);
             if (!modelApiKey) {
-                logger.warn("apiKey.missing", {});
-                throw new Error(l10n("OpenCode Go API key not found"));
+                throw new Error(l10n("API key not found for this provider. Please set it in settings."));
             }
 
-            // Send chat request
             const BASE_URL = baseUrl;
-            if (!BASE_URL || !BASE_URL.startsWith("http")) {
-                throw new Error(l10n("Invalid base URL configuration."));
-            }
 
-            // Get retry config
+            // Retry config
             const retryConfig = createRetryConfig();
 
-            // Create request timeout abort controller (default: 10 minutes)
-            requestTimeoutMs = config.get<number>("opencodego.requestTimeout", 600000);
+            // Request timeout
+            requestTimeoutMs = config.get<number>("multiLLM.requestTimeout", 600000);
             abortController = new AbortController();
             timeoutId = setTimeout(() => abortController.abort(), requestTimeoutMs);
-            // Connect VS Code cancellation token to abort the fetch immediately when user stops
             if (token.onCancellationRequested) {
                 token.onCancellationRequested(() => {
                     if (!abortController.signal.aborted) {
@@ -292,24 +260,21 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                     }
                 });
             }
-            // Create undici fetch with custom bodyTimeout (extends TCP idle timeout during streaming)
+
             dispatchFetch = this._createFetchWithTimeout(requestTimeoutMs);
 
-            // Prepare headers with custom headers if specified
+            // Prepare headers
             const requestHeaders = CommonApi.prepareHeaders(modelApiKey, apiMode, um?.headers);
             logger.debug("request.headers", {
                 headers: logger.sanitizeHeaders(requestHeaders as Record<string, string>),
             });
-            logger.debug("request.messages.origin", { messages });
 
             if (apiMode === "anthropic") {
-                // Anthropic API mode
+                // ── Anthropic API mode ──
                 const anthropicApi = new AnthropicApi(model.id);
                 anthropicApi.onUsage = (usage) => {
                     usageReportedDuringStream = true;
-                    // Always report to native Copilot indicator (use original progress, not trackingProgress wrapper)
                     reportNativeUsage(usage, progress);
-                    // Conditionally update Advanced Token indicator
                     if (enableThirdPartyIndicator) {
                         recordUsage(usage);
                         updateCumulativeTooltip(this.statusBarItem);
@@ -318,7 +283,6 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 };
                 const anthropicMessages = anthropicApi.convertMessages(messages, modelConfig);
 
-                // requestBody
                 let requestBody: AnthropicRequestBody = {
                     model: um?.id ?? model.id,
                     messages: anthropicMessages,
@@ -326,12 +290,11 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 };
                 requestBody = anthropicApi.prepareRequestBody(requestBody, um, options);
 
-                // Build Anthropic messages endpoint URL
                 const normalizedBaseUrl = BASE_URL.replace(/\/+$/, "");
                 const url = normalizedBaseUrl.endsWith("/v1")
                     ? `${normalizedBaseUrl}/messages`
                     : `${normalizedBaseUrl}/v1/messages`;
-                logger.debug("request.body", { url, requestBody });
+
                 const response = await executeWithRetry(async () => {
                     const res = await dispatchFetch(url, {
                         method: "POST",
@@ -342,13 +305,12 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
 
                     if (!res.ok) {
                         const errorText = await res.text();
-                        console.error("[Anthropic Provider] Anthropic API error response", errorText);
-                        // Detect content moderation rejection for images — skip retries, this won't recover
+                        console.error("[MultiLLM] API error response", errorText);
                         if (errorText.includes("image is sensitive")) {
                             throw new Error(`IMAGE_SENSITIVE: ${errorText}`);
                         }
                         throw new Error(
-                            `Anthropic API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}\nURL: ${url}`
+                            `API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}\nURL: ${url}`
                         );
                     }
 
@@ -356,12 +318,11 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 }, retryConfig);
 
                 if (!response.body) {
-                    throw new Error("No response body from Anthropic API");
+                    throw new Error("No response body from API");
                 }
                 await anthropicApi.processStreamingResponse(response.body, trackingProgress, token);
 
-                // --- Second round: handle ask_image tool call interception ---
-                // Clear the first-round timeout before starting the second round
+                // Handle vision proxy interception
                 clearTimeout(timeoutId);
                 await this._handleInterceptedToolCall({
                     api: anthropicApi,
@@ -379,13 +340,11 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                     options: options,
                 });
             } else {
-                // OpenAI Chat Completions API mode
+                // ── OpenAI API mode ──
                 const openaiApi = new OpenaiApi(model.id);
                 openaiApi.onUsage = (usage) => {
                     usageReportedDuringStream = true;
-                    // Always report to native Copilot indicator (use original progress, not trackingProgress wrapper)
                     reportNativeUsage(usage, progress);
-                    // Conditionally update Advanced Token indicator
                     if (enableThirdPartyIndicator) {
                         recordUsage(usage);
                         updateCumulativeTooltip(this.statusBarItem);
@@ -394,7 +353,6 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 };
                 const openaiMessages = openaiApi.convertMessages(messages, modelConfig);
 
-                // requestBody
                 let requestBody: Record<string, unknown> = {
                     model: um?.id ?? model.id,
                     messages: openaiMessages,
@@ -404,9 +362,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
 
                 requestBody = openaiApi.prepareRequestBody(requestBody, um, options);
 
-                // Send chat request with retry
                 const url = `${BASE_URL.replace(/\/+$/, "")}/chat/completions`;
-                logger.debug("request.body", { url, requestBody });
                 const response = await executeWithRetry(async () => {
                     const res = await dispatchFetch(url, {
                         method: "POST",
@@ -417,8 +373,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
 
                     if (!res.ok) {
                         const errorText = await res.text();
-                        console.error("[OpenCodeGo] API error response", errorText);
-                        // Detect content moderation rejection for images — skip retries, this won't recover
+                        console.error("[MultiLLM] API error response", errorText);
                         if (errorText.includes("image is sensitive")) {
                             throw new Error(`IMAGE_SENSITIVE: ${errorText}`);
                         }
@@ -436,8 +391,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
 
                 await openaiApi.processStreamingResponse(response.body, trackingProgress, token);
 
-                // --- Second round: handle ask_image tool call interception ---
-                // Clear the first-round timeout before starting the second round
+                // Handle vision proxy interception
                 clearTimeout(timeoutId);
                 await this._handleInterceptedToolCall({
                     api: openaiApi,
@@ -456,7 +410,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 });
             }
 
-            // Fallback: if API did not return usage data, use client-side calculation for native indicator
+            // Fallback: client-side token estimate
             if (!usageReportedDuringStream) {
                 const outputText = collectedOutputText.join("");
                 const estimatedOutputTokens = outputText ? await textTokenLength(outputText) : 0;
@@ -471,11 +425,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 }
             }
         } catch (err) {
-            // Determine if the request was aborted/terminated (friendly message instead of raw error)
             const errMessage = err instanceof Error ? err.message : String(err);
-            // Distinguish user cancellation from timeout: the AbortController is aborted
-            // by BOTH the timeout timer AND the user cancellation listener; check the
-            // VS Code cancellation token to tell them apart.
             const isUserCancelled = token.isCancellationRequested;
             const isTimeout = abortController.signal.aborted && !isUserCancelled;
             const isForceTerminated =
@@ -485,7 +435,6 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                  errMessage.includes("aborted") ||
                  (err instanceof Error && err.name === "AbortError"));
 
-            // If user cancelled, just re-throw the original error without wrapping
             if (isUserCancelled) {
                 throw err;
             }
@@ -500,22 +449,10 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 if (isForceTerminated) {
                     throw new Error(l10n("The connection was closed by the server. The generation took too long. Please try again or request shorter content."));
                 }
-                throw new Error(l10n("Request timed out. The generation took too long. You can increase the timeout in settings (opencodego.requestTimeout)."));
+                throw new Error(l10n("Request timed out. The generation took too long. You can increase the timeout in settings (multiLLM.requestTimeout)."));
             }
 
-            // Detect Zen free model expiration: a 401 from a Zen free model
-            // means the free promotion has ended (error text may vary - don't match on it)
-            if (errMessage.includes("[401]") && getZenFreeModelConfig(model.id)) {
-                const zenModelName = getZenFreeModelConfig(model.id)?.displayName ?? model.id;
-                logger.error("request.error", {
-                    modelId: model.id,
-                    error: "zen_free_model_expired",
-                    errorMessage: errMessage,
-                });
-                throw new Error(l10nFormat("{0} is no longer available as a free model. Please use a different model.", zenModelName));
-            }
-
-            // Detect image content moderation rejection from the API
+            // Detect image content moderation rejection
             if (errMessage.includes("IMAGE_SENSITIVE:")) {
                 logger.error("request.error", {
                     modelId: model.id,
@@ -525,7 +462,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 throw new Error(l10n("The image you sent was flagged as sensitive by the content moderation system. Please try a different image."));
             }
 
-            console.error("[OpenCodeGo] Chat request failed", {
+            console.error("[MultiLLM] Chat request failed", {
                 modelId: model.id,
                 messageCount: messages.length,
                 error: err instanceof Error ? { name: err.name, message: err.message } : String(err),
@@ -546,10 +483,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
     }
 
     /**
-     * Handle an ask_image tool call interception by calling the vision model
-     * with the model's specific query and making a second round API request
-     * with the tool call + result. Unlike the old describe_image approach,
-     * the model asks specific questions (query) about the image.
+     * Handle ask_image tool call interception with multi-round vision proxy.
      */
     private async _handleInterceptedToolCall(params: {
         api: CommonApi<any, any>;
@@ -570,29 +504,18 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
         const storedMessages = (api as any)._originalApiMessages as any[] | undefined;
         const hasLocalImages = ((api as any)._localImages as any[])?.length > 0;
 
-        // Nothing to proxy — no stored images
-        if (!hasLocalImages) {
-            logger.debug("vision.no-stored-images", { hasStoredMessages: !!storedMessages });
-            return;
-        }
-        if (!storedMessages || storedMessages.length === 0) {
-            logger.warn("vision.no-second-round-messages", {});
-            return;
-        }
+        if (!hasLocalImages) { return; }
+        if (!storedMessages || storedMessages.length === 0) { return; }
 
         const config = vscode.workspace.getConfiguration();
-        const visionModelId = config.get<string>("opencodego.visionProxyModel", "qwen3.6-plus");
-        const maxRounds = config.get<number>("opencodego.visionMaxRounds", 5);
+        const visionModelId = config.get<string>("multiLLM.visionProxyModel", "qwen3.6-plus");
+        const maxRounds = config.get<number>("multiLLM.visionMaxRounds", 5);
 
-        // Accumulate messages across rounds
         let currentMessages: any[] = [...storedMessages];
 
         for (let round = 1; round <= maxRounds; round++) {
             const intercepted = api.interceptedToolCall;
-            if (!intercepted) {
-                break;
-            }
-            // Clear so processStreamingResponse in the next round can set a new one
+            if (!intercepted) { break; }
             api.interceptedToolCall = null;
 
             logger.info("vision.intercepted", {
@@ -606,7 +529,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
 
             const visionPrompt = intercepted.args.query;
 
-            // Block 1: show the model's question in a thinking block
+            // Show model's question in thinking block
             const questionThinkId = `vision_q_${Date.now()}_${round}`;
             params.trackingProgress.report(
                 new vscode.LanguageModelThinkingPart(
@@ -614,14 +537,11 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                     questionThinkId
                 ) as unknown as LanguageModelResponsePart
             );
-            // Close block 1
             params.trackingProgress.report(
                 new vscode.LanguageModelThinkingPart("", questionThinkId) as unknown as LanguageModelResponsePart
             );
 
-            // Block 2: vision model's thinking/reasoning (real-time streaming)
             const thinkBlockId = `vision_think_${Date.now()}_${round}`;
-            // Block 3: vision model's final output (real-time streaming)
             const textBlockId = `vision_text_${Date.now()}_${round}`;
 
             const visionProgress = {
@@ -637,11 +557,9 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 },
             };
 
-            // Call vision model — single image or multi-image depending on tool used.
             let description: string;
             try {
                 if (intercepted.name === ASK_WITH_MULTI_IMAGE_TOOL_NAME) {
-                    // Multi-image: collect all referenced images
                     const indices = intercepted.args.imageIndices ?? [];
                     const images: StoredImage[] = [];
                     for (const idx of indices) {
@@ -655,19 +573,14 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                         description = await callVisionModelMulti(images, visionModelId, visionPrompt, params.token, visionProgress);
                     }
                 } else {
-                    // Single image
                     const storedImage = api.getStoredImage(intercepted.args.imageIndex ?? 0);
                     if (!storedImage) {
                         logger.warn("vision.image-not-found", { imageIndex: intercepted.args.imageIndex });
                         description = "[Image not found]";
                     } else {
                         description = await callVisionModel(
-                            storedImage.data,
-                            storedImage.mimeType,
-                            visionModelId,
-                            visionPrompt,
-                            params.token,
-                            visionProgress
+                            storedImage.data, storedImage.mimeType,
+                            visionModelId, visionPrompt, params.token, visionProgress
                         );
                     }
                 }
@@ -677,29 +590,22 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                 description = "[Image query unavailable]";
             }
 
-            // Close block 2 (vision thinking)
             params.trackingProgress.report(
                 new vscode.LanguageModelThinkingPart("", thinkBlockId) as unknown as LanguageModelResponsePart
             );
-            // Close block 3 (vision output)
             params.trackingProgress.report(
                 new vscode.LanguageModelThinkingPart("", textBlockId) as unknown as LanguageModelResponsePart
             );
-            if (params.token.isCancellationRequested) {
-                logger.info("vision.skipped-round", { round, reason: "user_cancelled" });
-                break;
-            }
 
-            // Build round messages
-            // Create a fresh abort controller for this round
+            if (params.token.isCancellationRequested) { break; }
+
             const roundAbortController = new AbortController();
-            const roundTimeoutMs = vscode.workspace.getConfiguration().get<number>("opencodego.requestTimeout", 600000);
+            const roundTimeoutMs = vscode.workspace.getConfiguration().get<number>("multiLLM.requestTimeout", 600000);
             const roundTimeoutId = setTimeout(() => {
                 if (!roundAbortController.signal.aborted) {
                     roundAbortController.abort();
                 }
             }, roundTimeoutMs);
-            // Forward user cancellation to the new controller
             if (params.token.onCancellationRequested) {
                 params.token.onCancellationRequested(() => {
                     if (!roundAbortController.signal.aborted) {
@@ -709,79 +615,73 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
             }
 
             try {
-            if (params.apiMode === "anthropic") {
-                // Anthropic format: tool_use + tool_result
-                currentMessages.push({
-                    role: "assistant" as const,
-                    content: [
-                        { type: "tool_use" as const, id: intercepted.id, name: intercepted.name, input: intercepted.args },
-                    ],
-                });
-                currentMessages.push({
-                    role: "user" as const,
-                    content: [
-                        { type: "tool_result" as const, tool_use_id: intercepted.id, content: description },
-                    ],
-                });
-
-                const body: Record<string, unknown> = {
-                    model: params.um?.id ?? params.model.id,
-                    messages: currentMessages,
-                    stream: true,
-                };
-                if (params.um?.max_completion_tokens !== undefined) {
-                    body.max_tokens = params.um.max_completion_tokens;
-                } else if (params.um?.max_tokens !== undefined) {
-                    body.max_tokens = params.um.max_tokens;
-                }
-                if (params.um?.temperature !== undefined && params.um.temperature !== null) {
-                    body.temperature = params.um.temperature;
-                }
-                const systemContent = (params.api as any)._systemContent as string | undefined;
-                if (systemContent) {
-                    body.system = systemContent;
-                }
-                if (params.um?.enable_thinking === true) {
-                    if (params.um?.reasoning_effort === 'adaptive') {
-                        body.thinking = { type: "adaptive" };
-                    } else {
-                        body.thinking = { type: "enabled", budget_tokens: 8192 };
-                    }
-                }
-
-                // Inject tools (VS Code + ask_image + ask_with_multi_image)
-                const anthropicToolList: Array<{ name: string; description?: string; input_schema?: object }> = [];
-                const toolConfig = convertToolsToOpenAI(params.options);
-                if (toolConfig.tools) {
-                    for (const tool of toolConfig.tools) {
-                        anthropicToolList.push({
-                            name: tool.function.name,
-                            description: tool.function.description,
-                            input_schema: tool.function.parameters,
-                        });
-                    }
-                }
-                if (hasLocalImages) {
-                    const singleDef = ASK_IMAGE_TOOL_DEF as unknown as { function: { name: string; description: string; parameters: object } };
-                    anthropicToolList.push({
-                        name: singleDef.function.name,
-                        description: singleDef.function.description,
-                        input_schema: singleDef.function.parameters,
+                if (params.apiMode === "anthropic") {
+                    currentMessages.push({
+                        role: "assistant" as const,
+                        content: [
+                            { type: "tool_use" as const, id: intercepted.id, name: intercepted.name, input: intercepted.args },
+                        ],
                     });
-                    if (((api as any)._localImages as any[])?.length >= 2) {
-                        const multiDef = ASK_WITH_MULTI_IMAGE_TOOL_DEF as unknown as { function: { name: string; description: string; parameters: object } };
-                        anthropicToolList.push({
-                            name: multiDef.function.name,
-                            description: multiDef.function.description,
-                            input_schema: multiDef.function.parameters,
-                        });
-                    }
-                }
-                if (anthropicToolList.length > 0) {
-                    body.tools = anthropicToolList;
-                }
+                    currentMessages.push({
+                        role: "user" as const,
+                        content: [
+                            { type: "tool_result" as const, tool_use_id: intercepted.id, content: description },
+                        ],
+                    });
 
-                const normalizedUrl = params.baseUrl.replace(/\/+$/, "");
+                    const body: Record<string, unknown> = {
+                        model: params.um?.id ?? params.model.id,
+                        messages: currentMessages,
+                        stream: true,
+                    };
+                    if (params.um?.max_completion_tokens !== undefined) {
+                        body.max_tokens = params.um.max_completion_tokens;
+                    } else if (params.um?.max_tokens !== undefined) {
+                        body.max_tokens = params.um.max_tokens;
+                    }
+                    if (params.um?.temperature !== undefined && params.um.temperature !== null) {
+                        body.temperature = params.um.temperature;
+                    }
+                    const systemContent = (params.api as any)._systemContent as string | undefined;
+                    if (systemContent) { body.system = systemContent; }
+                    if (params.um?.enable_thinking === true) {
+                        if (params.um?.reasoning_effort === "adaptive") {
+                            body.thinking = { type: "adaptive" };
+                        } else {
+                            body.thinking = { type: "enabled", budget_tokens: 8192 };
+                        }
+                    }
+
+                    const anthropicToolList: Array<{ name: string; description?: string; input_schema?: object }> = [];
+                    const toolConfig = convertToolsToOpenAI(params.options);
+                    if (toolConfig.tools) {
+                        for (const tool of toolConfig.tools) {
+                            anthropicToolList.push({
+                                name: tool.function.name,
+                                description: tool.function.description,
+                                input_schema: tool.function.parameters,
+                            });
+                        }
+                    }
+                    if (hasLocalImages) {
+                        const singleDef = ASK_IMAGE_TOOL_DEF as unknown as { function: { name: string; description: string; parameters: object } };
+                        anthropicToolList.push({
+                            name: singleDef.function.name,
+                            description: singleDef.function.description,
+                            input_schema: singleDef.function.parameters,
+                        });
+                        if (((api as any)._localImages as any[])?.length >= 2) {
+                            const multiDef = ASK_WITH_MULTI_IMAGE_TOOL_DEF as unknown as { function: { name: string; description: string; parameters: object } };
+                            anthropicToolList.push({
+                                name: multiDef.function.name,
+                                description: multiDef.function.description,
+                                input_schema: multiDef.function.parameters,
+                            });
+                        }
+                    }
+                    if (anthropicToolList.length > 0) { body.tools = anthropicToolList; }
+
+                    const normalizedUrl = params.baseUrl.replace(/\/+$/, "");
                     const url = normalizedUrl.endsWith("/v1")
                         ? `${normalizedUrl}/messages`
                         : `${normalizedUrl}/v1/messages`;
@@ -795,7 +695,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                         });
                         if (!res.ok) {
                             const errorText = await res.text();
-                            throw new Error(`Anthropic API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}`);
+                            throw new Error(`API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}`);
                         }
                         return res;
                     }, params.retryConfig);
@@ -804,7 +704,6 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                         await api.processStreamingResponse(response.body, params.trackingProgress, params.token);
                     }
                 } else {
-                    // OpenAI format: append assistant tool_call + tool result
                     currentMessages.push({
                         role: "assistant" as const,
                         reasoning_content: `Calling ${intercepted.name} tool (round ${round}) to get information about the user's attached image(s).`,
@@ -845,25 +744,18 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
                     }
                     if (params.um?.enable_thinking === true) {
                         body.thinking = { type: "enabled" };
-                    } else {
-                        body.thinking = { type: false };
                     }
 
-                    // Inject tools (VS Code + ask_image + ask_with_multi_image)
                     const openaiToolList: any[] = [];
                     const toolConfig = convertToolsToOpenAI(params.options);
-                    if (toolConfig.tools) {
-                        openaiToolList.push(...toolConfig.tools);
-                    }
+                    if (toolConfig.tools) { openaiToolList.push(...toolConfig.tools); }
                     if (hasLocalImages) {
                         openaiToolList.push(ASK_IMAGE_TOOL_DEF);
                         if (((api as any)._localImages as any[])?.length >= 2) {
                             openaiToolList.push(ASK_WITH_MULTI_IMAGE_TOOL_DEF);
                         }
                     }
-                    if (openaiToolList.length > 0) {
-                        body.tools = openaiToolList;
-                    }
+                    if (openaiToolList.length > 0) { body.tools = openaiToolList; }
 
                     const url = `${params.baseUrl.replace(/\/+$/, "")}/chat/completions`;
                     const response = await executeWithRetry(async () => {
@@ -891,21 +783,34 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
     }
 
     /**
-     * Ensure an API key exists in SecretStorage, optionally prompting the user when not silent.
+     * Get API key for a provider, prompting user if missing.
      */
-    private async ensureApiKey(): Promise<string | undefined> {
-        let apiKey = await this.secrets.get("opencodego.apiKey");
+    private async getModelApiKey(providerId: string): Promise<string | undefined> {
+        if (!providerId) {
+            // Fallback: try old-style key for backward compat
+            const oldKey = await this.secrets.get("opencodego.apiKey");
+            if (oldKey) {
+                return oldKey;
+            }
+        }
+
+        let apiKey = await getProviderApiKey(providerId, this.secrets);
 
         if (!apiKey) {
+            const { getProviders: getProvs } = await import("./providers.js");
+            const providers = getProvs();
+            const provider = providers.find((p: { id: string }) => p.id === providerId);
+            const label = provider?.label || providerId;
+
             const entered = await vscode.window.showInputBox({
-                title: l10n("OpenCode Go Provider API Key"),
-                prompt: l10n("Enter your OpenCode Go API key"),
+                title: l10nFormat("{0} API Key", label),
+                prompt: l10n("Enter your API key"),
                 ignoreFocusOut: true,
                 password: true,
             });
             if (entered && entered.trim()) {
                 apiKey = entered.trim();
-                await this.secrets.store("opencodego.apiKey", apiKey);
+                await storeProviderApiKey(providerId, apiKey, this.secrets);
             }
         }
 

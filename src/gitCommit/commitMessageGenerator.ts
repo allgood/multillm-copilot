@@ -4,9 +4,9 @@ import * as vscode from "vscode";
 import { getGitDiff, getRecentCommits } from "./gitUtils";
 import { OpenaiApi } from "../openai/openaiApi";
 import { AnthropicApi } from "../anthropic/anthropicApi";
-import { getBuiltInModelConfig } from "../models";
+import { getModelConfig, parseCompositeModelId, getProviderApiKey, storeProviderApiKey } from "../providers";
 import { logger } from "../logger";
-import { l10n } from "../localize";
+import { l10n, l10nFormat } from "../localize";
 import type { OpenCodeGoModelItem } from "../types";
 
 /**
@@ -143,19 +143,19 @@ async function generateCommitMsgForRepository(secrets: vscode.SecretStorage, rep
     );
 }
 
-async function ensureApiKey(secrets: vscode.SecretStorage): Promise<string | undefined> {
-    let apiKey = await secrets.get("opencodego.apiKey");
+async function getCommitApiKey(secrets: vscode.SecretStorage, providerId: string): Promise<string | undefined> {
+    let apiKey = await getProviderApiKey(providerId, secrets);
 
     if (!apiKey) {
         const entered = await vscode.window.showInputBox({
-            title: l10n("OpenCode Go Provider API Key"),
-            prompt: l10n("Enter your OpenCode Go API key"),
+            title: l10nFormat("{0} API Key", providerId),
+            prompt: l10n("Enter your API key"),
             ignoreFocusOut: true,
             password: true,
         });
         if (entered && entered.trim()) {
             apiKey = entered.trim();
-            await secrets.store("opencodego.apiKey", apiKey);
+            await storeProviderApiKey(providerId, apiKey, secrets);
         }
     }
 
@@ -166,15 +166,15 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
     const startTime = Date.now();
     let modelId: string | undefined;
     try {
-        vscode.commands.executeCommand("setContext", "opencodego.isGeneratingCommit", true);
+        vscode.commands.executeCommand("setContext", "multiLLM.isGeneratingCommit", true);
         const config = vscode.workspace.getConfiguration();
 
-        const customSystemPrompt = config.get<string>("opencodego.commitMessagePrompt", "");
+        const customSystemPrompt = config.get<string>("multiLLM.commitMessagePrompt", "");
         let systemPrompt = customSystemPrompt || DEFAULT_PROMPT.system;
 
         // Fetch recent commits for style reference
-        const recentCommitsCount = config.get<number>("opencodego.recentCommitsCount", 10);
-        const includeCommitDiff = config.get<boolean>("opencodego.commitIncludeCommitDiff", false);
+        const recentCommitsCount = config.get<number>("multiLLM.recentCommitsCount", 10);
+        const includeCommitDiff = config.get<boolean>("multiLLM.commitIncludeCommitDiff", false);
         if (recentCommitsCount > 0 && repoPath) {
             const recentCommits = await getRecentCommits(repoPath, recentCommitsCount, { includeDiff: includeCommitDiff });
             if (recentCommits) {
@@ -188,7 +188,7 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
         const prompts: string[] = [];
 
         // Attach AGENTS.md and README.md context
-        const attachContextFiles = config.get<boolean>("opencodego.commitAttachContextFiles", true);
+        const attachContextFiles = config.get<boolean>("multiLLM.commitAttachContextFiles", true);
         if (attachContextFiles && repoPath) {
             const contextFiles = ["AGENTS.md", "README.md"];
             for (const fileName of contextFiles) {
@@ -219,41 +219,47 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
         prompts.push(truncatedDiff);
         const prompt = prompts.join("\n\n");
 
-        // Use model from config or default to deepseek-v4-flash
-        const commitModelId = config.get<string>("opencodego.commitModel", "deepseek-v4-flash");
-        // Fetch full model config (apiMode, max_completion_tokens, extra, etc.)
-        const selectedModel: OpenCodeGoModelItem = getBuiltInModelConfig(commitModelId) ?? { id: commitModelId, owned_by: "opencode" };
-        // Commit messages are simple tasks — disable thinking to speed up generation.
+        // Use model from config or default
+        const commitModelId = config.get<string>("multiLLM.commitModel", "");
+        // Resolve model config through provider system
+        const selectedModel: OpenCodeGoModelItem = commitModelId
+            ? (getModelConfig(commitModelId) ?? { id: commitModelId, owned_by: "unknown" })
+            : { id: "default", owned_by: "unknown" };
+
+        if (!commitModelId || selectedModel.owned_by === "unknown") {
+            throw new Error(l10n("No commit model configured. Set multiLLM.commitModel in settings."));
+        }
+
+        // Commit messages are simple tasks — disable thinking
         selectedModel.enable_thinking = false;
         selectedModel.reasoning_effort = "high";
-        // Cap max_completion_tokens to avoid proxy 500 errors with oversized values
+        // Cap max_completion_tokens
         if (selectedModel.max_completion_tokens && selectedModel.max_completion_tokens > 8192) {
             selectedModel.max_completion_tokens = 8192;
         }
         modelId = selectedModel.id;
         logger.info("commit.start", { modelId });
 
-        const apiKey = await ensureApiKey(secrets);
+        const { providerId } = parseCompositeModelId(commitModelId);
+        const apiKey = await getCommitApiKey(secrets, providerId);
         if (!apiKey) {
-            throw new Error(l10n("OpenCode Go API key not found"));
+            throw new Error(l10n("API key not found for commit generation. Please configure it in settings."));
         }
 
-        const baseUrl = selectedModel.baseUrl || "https://opencode.ai/zen/go/v1/";
+        const baseUrl = selectedModel.baseUrl;
         if (!baseUrl || !baseUrl.startsWith("http")) {
             throw new Error(l10n("Invalid base URL configuration."));
         }
 
-        // Apply language instruction: auto mode lets the model infer from style reference
-        const commitLanguage = config.get<string>("opencodego.commitLanguage", "auto");
+        // Apply language instruction
+        const commitLanguage = config.get<string>("multiLLM.commitLanguage", "auto");
         if (commitLanguage !== "auto") {
             systemPrompt += ` Generate commit message in ${commitLanguage}.`;
         }
 
         const messages = [{ role: "user", content: prompt }];
 
-        // Use the appropriate API based on model config
-        const commitModelConfig = getBuiltInModelConfig(commitModelId);
-        const apiMode = commitModelConfig?.apiMode || "openai";
+        const apiMode = selectedModel.apiMode || "openai";
 
         const apiInstance = apiMode === "anthropic"
             ? new AnthropicApi(modelId)
@@ -283,13 +289,13 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
         logger.error("commit.error", { modelId: modelId ?? "unknown", error: errorMessage });
         vscode.window.showErrorMessage(`${l10n("Failed to generate commit message:")} ${errorMessage}`);
     } finally {
-        vscode.commands.executeCommand("setContext", "opencodego.isGeneratingCommit", false);
+        vscode.commands.executeCommand("setContext", "multiLLM.isGeneratingCommit", false);
     }
 }
 
 export function abortCommitGeneration() {
     commitGenerationAbortController?.abort();
-    vscode.commands.executeCommand("setContext", "opencodego.isGeneratingCommit", false);
+    vscode.commands.executeCommand("setContext", "multiLLM.isGeneratingCommit", false);
 }
 
 function extractCommitMessage(str: string): string {
