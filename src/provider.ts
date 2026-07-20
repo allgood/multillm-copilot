@@ -12,7 +12,7 @@ import {
 
 import * as path from "path";
 
-import type { ModelPreset, OpenCodeGoModelItem } from "./types";
+import type { ModelPreset, MultiLLMModelItem } from "./types";
 
 import { createRetryConfig, executeWithRetry, convertToolsToOpenAI } from "./utils";
 
@@ -520,7 +520,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
         api: CommonApi<any, any>;
         apiMode: string;
         model: LanguageModelChatInformation;
-        um: OpenCodeGoModelItem | undefined;
+        um: MultiLLMModelItem | undefined;
         modelApiKey: string;
         baseUrl: string;
         dispatchFetch: typeof fetch;

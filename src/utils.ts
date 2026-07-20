@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { OpenCodeGoModelItem, RetryConfig } from "./types";
+import type { MultiLLMModelItem, RetryConfig } from "./types";
 import type { StoredImage } from "./vision/types";
 import { OpenAIFunctionToolDef } from "./openai/openaiTypes";
 
@@ -46,15 +46,15 @@ export function getModelProviderId(model: unknown): string {
     );
 }
 
-export function normalizeUserModels(models: unknown): OpenCodeGoModelItem[] {
+export function normalizeUserModels(models: unknown): MultiLLMModelItem[] {
     const list = Array.isArray(models) ? models : [];
-    const out: OpenCodeGoModelItem[] = [];
+    const out: MultiLLMModelItem[] = [];
     for (const item of list) {
         if (!item || typeof item !== "object") {
             continue;
         }
         const provider = getModelProviderId(item);
-        out.push({ ...(item as OpenCodeGoModelItem), owned_by: provider });
+        out.push({ ...(item as MultiLLMModelItem), owned_by: provider });
     }
     return out;
 }

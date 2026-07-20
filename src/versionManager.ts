@@ -8,7 +8,7 @@ export class VersionManager {
      */
     static getVersion(): string {
         if (this._version === null) {
-            const extension = vscode.extensions.getExtension("my-company.opencode-go-copilot");
+            const extension = vscode.extensions.getExtension("allgood.multi-llm-copilot-provider");
             this._version = extension?.packageJSON?.version ?? "unknown";
         }
         return this._version!;
@@ -19,7 +19,7 @@ export class VersionManager {
      */
     static getUserAgent(): string {
         const vscodeVersion = vscode.version;
-        return `opencode-go-copilot/${this.getVersion()} VSCode/${vscodeVersion}`;
+        return `multi-llm-copilot-provider/${this.getVersion()} VSCode/${vscodeVersion}`;
     }
 
     /**
@@ -27,9 +27,9 @@ export class VersionManager {
      */
     static getClientInfo(): { name: string; version: string; author: string } {
         return {
-            name: "opencode-go-copilot",
+            name: "multi-llm-copilot-provider",
             version: this.getVersion(),
-            author: "my-company",
+            author: "allgood",
         };
     }
 }

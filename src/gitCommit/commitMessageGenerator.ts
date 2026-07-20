@@ -7,7 +7,7 @@ import { AnthropicApi } from "../anthropic/anthropicApi";
 import { getModelConfig, parseCompositeModelId, getProviderApiKey, storeProviderApiKey } from "../providers";
 import { logger } from "../logger";
 import { l10n, l10nFormat } from "../localize";
-import type { OpenCodeGoModelItem } from "../types";
+import type { MultiLLMModelItem } from "../types";
 
 /**
  * Git commit message generator module.
@@ -222,7 +222,7 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
         // Use model from config or default
         const commitModelId = config.get<string>("multiLLM.commitModel", "");
         // Resolve model config through provider system
-        const selectedModel: OpenCodeGoModelItem = commitModelId
+        const selectedModel: MultiLLMModelItem = commitModelId
             ? (getModelConfig(commitModelId) ?? { id: commitModelId, owned_by: "unknown" })
             : { id: "default", owned_by: "unknown" };
 

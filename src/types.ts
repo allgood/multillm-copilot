@@ -57,7 +57,7 @@ export interface ProviderModelDef {
 /**
  * A single model entry for Multi-LLM.
  */
-export interface OpenCodeGoModelItem {
+export interface MultiLLMModelItem {
     id: string;
     object?: string;
     created?: number;

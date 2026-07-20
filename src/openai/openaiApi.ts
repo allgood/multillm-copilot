@@ -7,7 +7,7 @@ import {
     Progress,
 } from "vscode";
 
-import type { OpenCodeGoModelItem } from "../types";
+import type { MultiLLMModelItem } from "../types";
 
 import type {
     OpenAIChatMessage,
@@ -240,7 +240,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 
     prepareRequestBody(
         rb: Record<string, unknown>,
-        um: OpenCodeGoModelItem | undefined,
+        um: MultiLLMModelItem | undefined,
         options?: ProvideLanguageModelChatResponseOptions
     ): Record<string, unknown> {
         // temperature
@@ -282,7 +282,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
             }
         }
 
-        // OpenRouter/OpenCode Go reasoning configuration
+        // OpenRouter reasoning configuration
         if (um?.reasoning !== undefined && um.reasoning.enabled !== false) {
             const reasoningObj: Record<string, unknown> = {};
             const effort = um.reasoning.effort;
@@ -434,7 +434,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 
                         await this.processDelta(parsed, progress);
                     } catch (e) {
-                        console.error("[OpenCodeGo] Failed to parse SSE chunk:", e, "data:", data);
+                        console.error("[MultiLLM] Failed to parse SSE chunk:", e, "data:", data);
                         logger.error("openai.stream.chunk.error", {
                             modelId,
                             error: e instanceof Error ? e.message : String(e),
@@ -445,7 +445,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
             }
             logger.debug("openai.stream.done", { modelId });
         } catch (e) {
-            console.error("[OpenCodeGo] Streaming response error:", e);
+            console.error("[MultiLLM] Streaming response error:", e);
             logger.error("openai.stream.error", { modelId, error: e instanceof Error ? e.message : String(e) });
             throw e;
         } finally {
@@ -520,7 +520,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                 }
             }
         } catch (e) {
-            console.error("[OpenCodeGo] Failed to process thinking/reasoning_details:", e);
+            console.error("[MultiLLM] Failed to process thinking/reasoning_details:", e);
         }
 
         if (deltaObj?.content) {
@@ -582,7 +582,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
      * Create a non-streaming chat message (for Git commit generation).
      */
     async *createMessage(
-        model: OpenCodeGoModelItem,
+        model: MultiLLMModelItem,
         systemPrompt: string,
         messages: { role: string; content: string }[],
         baseUrl: string,

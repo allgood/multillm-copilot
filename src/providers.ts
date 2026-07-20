@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { LanguageModelChatInformation } from "vscode";
-import type { ProviderConfig, ProviderModelDef, OpenCodeGoModelItem } from "./types";
+import type { ProviderConfig, ProviderModelDef, MultiLLMModelItem } from "./types";
 import { l10n } from "./localize";
 import { logger } from "./logger";
 
@@ -363,11 +363,11 @@ export function parseCompositeModelId(compositeId: string): { providerId: string
 }
 
 /**
- * Build an OpenCodeGoModelItem from a composite model ID by looking up the
+ * Build an MultiLLMModelItem from a composite model ID by looking up the
  * provider config and the model definition within it.
  * Returns undefined if the model ID does not match any known provider/model.
  */
-export function getModelConfig(compositeId: string): OpenCodeGoModelItem | undefined {
+export function getModelConfig(compositeId: string): MultiLLMModelItem | undefined {
     const { providerId, modelId } = parseCompositeModelId(compositeId);
     if (!providerId) {
         return undefined;
@@ -406,7 +406,7 @@ export function getModelConfig(compositeId: string): OpenCodeGoModelItem | undef
     };
 }
 
-function defToModelItem(def: ProviderModelDef, provider: ProviderConfig): OpenCodeGoModelItem {
+function defToModelItem(def: ProviderModelDef, provider: ProviderConfig): MultiLLMModelItem {
     const apiMode = def.apiMode
         ?? (provider.apiMode === "auto" ? "openai" : (provider.apiMode ?? "openai"));
 

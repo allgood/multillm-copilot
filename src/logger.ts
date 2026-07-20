@@ -9,7 +9,7 @@ class Logger {
      * Initialize the logger: create the VS Code Output channel.
      */
     init(): void {
-        this._outputChannel = vscode.window.createOutputChannel("OpenCodeGo", { log: true });
+        this._outputChannel = vscode.window.createOutputChannel("MultiLLM", { log: true });
     }
 
     debug(tag: string, data: Record<string, unknown>): void {

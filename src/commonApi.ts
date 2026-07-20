@@ -8,7 +8,7 @@ import {
     Progress,
     CancellationToken,
 } from "vscode";
-import { OpenCodeGoModelItem } from "./types";
+import { MultiLLMModelItem } from "./types";
 import { tryParseJSONObject } from "./utils";
 import type { InterceptedToolCall, StoredImage } from "./vision/types";
 import { ASK_IMAGE_TOOL_NAME, ASK_WITH_MULTI_IMAGE_TOOL_NAME } from "./vision/types";
@@ -120,7 +120,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
      */
     abstract prepareRequestBody(
         rb: TRequestBody,
-        um: OpenCodeGoModelItem | undefined,
+        um: MultiLLMModelItem | undefined,
         options?: ProvideLanguageModelChatResponseOptions
     ): TRequestBody;
 
