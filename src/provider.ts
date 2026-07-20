@@ -388,11 +388,14 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                 });
                 // Write full body to temp file for inspection
                 try {
-                    const fs = require("fs");
-                    const tmpFile = require("os").tmpdir() + "/multillm-debug-request.json";
+                    const fs = await import("fs");
+                    const os = await import("os");
+                    const tmpFile = os.tmpdir() + "/multillm-debug-request.json";
                     fs.writeFileSync(tmpFile, JSON.stringify(requestBody, null, 2));
                     logger.info("request.debug.file", { path: tmpFile });
-                } catch (_) {}
+                } catch {
+                    // Ignore debug file write failures
+                }
 
                 const response = await executeWithRetry(async () => {
                     const res = await dispatchFetch(url, {
