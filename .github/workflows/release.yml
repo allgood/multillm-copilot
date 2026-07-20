@@ -111,29 +111,24 @@ jobs:
             echo "EOF"
           } >> $GITHUB_OUTPUT
 
-      # On tag push, create a draft Release with generated changelog
-      - name: Create draft Release (tag push)
-        if: github.event_name != 'release'
+      # Create a published Release with generated changelog
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Release ${{ steps.tag.outputs.tag }}
           body_path: /tmp/changelog.txt
-          draft: true
-          prerelease: false
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.tag, 'alpha') || contains(steps.tag.outputs.tag, 'beta') || contains(steps.tag.outputs.tag, 'rc') }}
           files: extension.vsix
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # On published Release, only upload the .vsix without modifying the user-written description
-      - name: Upload .vsix to published Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          files: extension.vsix
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # TODO: Uncomment when ready to publish to VS Code Marketplace
+      # - name: Publish to VS Code Marketplace
+      #   run: npx @vscode/vsce publish -p ${{ secrets.VSCE_PAT }}
+      #   env:
+      #     VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
       # Upload .vsix as a workflow artifact (backup)
       - name: Upload .vsix as workflow artifact
@@ -142,9 +137,3 @@ jobs:
           name: opencode-go-copilot-${{ steps.version.outputs.version }}.vsix
           path: extension.vsix
           if-no-files-found: error
-
-      # 发布到 VS Code Marketplace
-      - name: Publish to VS Code Marketplace
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx @vscode/vsce publish -p "$VSCE_PAT" --packagePath extension.vsix --allow-all-proposed-apis

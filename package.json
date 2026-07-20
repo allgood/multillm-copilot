@@ -1,6 +1,7 @@
 {
 	"name": "multi-llm-copilot-provider",
-	"publisher": "allgood",
+	"//publisher": "allgood",
+	"//_comment_publisher": "Uncomment when publishing to VS Code Marketplace",
 	"displayName": "Multi-LLM Provider for Copilot",
 	"description": "Use any LLM provider (OpenAI, Anthropic, or custom endpoints) in GitHub Copilot Chat",
 	"icon": "assets/logo.png",
