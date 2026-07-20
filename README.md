@@ -25,11 +25,13 @@ Multi-LLM Provider for Copilot is a VS Code extension that lets you configure ar
 
 ### 1. Install
 
+Download the latest `extension.vsix` from the [Releases page](https://github.com/OnesoftQwQ/opencode-go-copilot/releases), then install it:
+
 ```bash
 code --install-extension extension.vsix
 ```
 
-Or: `Cmd+Shift+P` → `Extensions: Install from VSIX...` → select `extension.vsix`
+Or: `Cmd+Shift+P` → `Extensions: Install from VSIX...` → select the downloaded `extension.vsix`
 
 ### 2. Add a Provider
 
