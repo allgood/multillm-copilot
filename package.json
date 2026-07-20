@@ -163,7 +163,10 @@
 									"vision": false,
 									"thinkingMode": "switchable",
 									"defaultReasoningEffort": "max",
-									"supportedReasoningEfforts": ["high", "max"],
+									"supportedReasoningEfforts": [
+										"high",
+										"max"
+									],
 									"contextLength": 1000000,
 									"maxOutputTokens": 393216
 								},
@@ -173,7 +176,10 @@
 									"vision": false,
 									"thinkingMode": "switchable",
 									"defaultReasoningEffort": "max",
-									"supportedReasoningEfforts": ["high", "max"],
+									"supportedReasoningEfforts": [
+										"high",
+										"max"
+									],
 									"contextLength": 1000000,
 									"maxOutputTokens": 393216
 								},
@@ -215,7 +221,9 @@
 									"vision": true,
 									"thinkingMode": "adaptive",
 									"apiMode": "anthropic",
-									"extra": {"reasoning_split": true},
+									"extra": {
+										"reasoning_split": true
+									},
 									"contextLength": 1000000,
 									"maxOutputTokens": 32768
 								},
@@ -225,7 +233,9 @@
 									"vision": false,
 									"thinkingMode": "always",
 									"apiMode": "anthropic",
-									"extra": {"reasoning_split": true},
+									"extra": {
+										"reasoning_split": true
+									},
 									"contextLength": 204800,
 									"maxOutputTokens": 32768
 								},
@@ -424,7 +434,11 @@
 					],
 					"items": {
 						"type": "object",
-						"required": ["id", "label", "temperature"],
+						"required": [
+							"id",
+							"label",
+							"temperature"
+						],
 						"properties": {
 							"id": {
 								"type": "string",
