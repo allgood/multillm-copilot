@@ -37,7 +37,7 @@ export interface ProviderModelDef {
     /** Whether the model supports image input */
     vision: boolean;
     /** Thinking mode */
-    thinkingMode: "switchable" | "always" | "adaptive";
+    thinkingMode: "switchable" | "always" | "adaptive" | "reasoning_effort";
     /** Default context length */
     contextLength?: number;
     /** Default max output tokens */
@@ -106,8 +106,8 @@ export interface MultiLLMModelItem {
     delay?: number;
     /** API mode (for internal use) */
     apiMode?: string;
-    /** Whether this model supports switching thinking on/off ("switchable"), always has it ("always"), or only disabled/adaptive ("adaptive") */
-    thinkingMode?: "switchable" | "always" | "adaptive";
+    /** Whether this model supports switching thinking on/off ("switchable"), always has it ("always"), only disabled/adaptive ("adaptive"), or uses reasoning_effort only ("reasoning_effort") */
+    thinkingMode?: "switchable" | "always" | "adaptive" | "reasoning_effort";
     /** Custom HTTP headers */
     headers?: Record<string, string>;
 

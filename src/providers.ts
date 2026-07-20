@@ -28,6 +28,8 @@ export interface DynamicModelInfo {
         tool_calls?: boolean;
         chat?: boolean;
     };
+    /** Supported reasoning effort levels (standard OpenAI format). Presence indicates the API uses reasoning_effort, not the thinking field. */
+    reasoning_efforts?: string[];
 }
 
 const modelCache = new Map<string, ModelCacheEntry>();
@@ -70,6 +72,7 @@ async function fetchDynamicModels(baseUrl: string, apiKey?: string): Promise<Dyn
                 tool_calls?: boolean;
                 chat?: boolean;
             };
+            reasoning_efforts?: string[];
         }>;
     };
     return (body.data ?? []).map((m) => ({
@@ -78,6 +81,7 @@ async function fetchDynamicModels(baseUrl: string, apiKey?: string): Promise<Dyn
         context_window: m.context_window,
         max_output_tokens: m.max_output_tokens,
         capabilities: m.capabilities,
+        reasoning_efforts: m.reasoning_efforts,
     }));
 }
 
@@ -122,7 +126,7 @@ function buildStaticModelInfo(
     const hasEfforts = def.supportedReasoningEfforts && def.supportedReasoningEfforts.length > 0;
     let enumValues: string[];
     if (hasEfforts) {
-        enumValues = def.thinkingMode === "switchable"
+        enumValues = def.thinkingMode === "switchable" || def.thinkingMode === "reasoning_effort"
             ? ["disabled", ...def.supportedReasoningEfforts!]
             : [...def.supportedReasoningEfforts!];
     } else {
@@ -130,6 +134,8 @@ function buildStaticModelInfo(
             enumValues = ["disabled", "enabled"];
         } else if (def.thinkingMode === "adaptive") {
             enumValues = ["disabled", "adaptive"];
+        } else if (def.thinkingMode === "reasoning_effort") {
+            enumValues = ["disabled", "enabled"];
         } else {
             enumValues = ["enabled"];
         }
@@ -214,16 +220,30 @@ function buildDynamicModelInfo(
     const maxOut = model.max_output_tokens ?? 4096;
     const name = model.id;
 
+    // Detect if the API uses reasoning_effort (standard OpenAI) vs thinking field.
+    // Presence of reasoning_efforts array indicates the API uses reasoning_effort only.
+    const hasReasoningEfforts = model.reasoning_efforts && model.reasoning_efforts.length > 0;
+
     let enumValues: string[];
     let enumItemLabels: string[];
     let enumDescriptions: string[];
     let defaultEffort: string;
 
     if (supportsReasoning) {
-        enumValues = ["disabled", "enabled"];
-        enumItemLabels = [l10n("Disabled"), l10n("Thinking")];
-        enumDescriptions = [l10n("Do not enable thinking"), l10n("Enable thinking")];
-        defaultEffort = "disabled";
+        if (hasReasoningEfforts) {
+            // API uses reasoning_effort only — filter out "disabled" from the list
+            // and use the API-provided effort levels
+            const efforts = model.reasoning_efforts!.filter(e => e !== "disabled");
+            enumValues = ["disabled", ...efforts];
+            enumItemLabels = [l10n("Disabled"), ...efforts.map(e => e.charAt(0).toUpperCase() + e.slice(1))];
+            enumDescriptions = [l10n("Do not enable thinking"), ...efforts.map(() => "")];
+            defaultEffort = "disabled";
+        } else {
+            enumValues = ["disabled", "enabled"];
+            enumItemLabels = [l10n("Disabled"), l10n("Thinking")];
+            enumDescriptions = [l10n("Do not enable thinking"), l10n("Enable thinking")];
+            defaultEffort = "disabled";
+        }
     } else {
         enumValues = ["disabled"];
         enumItemLabels = [l10n("Disabled")];
@@ -387,19 +407,23 @@ export function getModelConfig(compositeId: string): MultiLLMModelItem | undefin
         }
     }
 
-    // Try dynamic model (generic fallback)
+    // Try dynamic model — check cache for reasoning_efforts metadata
+    const cached = modelCache.get(providerId);
+    const dynamicModel = cached?.models.find((m) => m.id === modelId);
+    const hasReasoningEfforts = dynamicModel?.reasoning_efforts && dynamicModel.reasoning_efforts.length > 0;
+
     return {
         id: modelId,
         owned_by: providerId,
         displayName: modelId,
         baseUrl: provider.baseUrl,
-        vision: false,
-        context_length: 128000,
-        max_completion_tokens: 4096,
+        vision: dynamicModel?.capabilities?.vision ?? false,
+        context_length: dynamicModel?.context_window ?? 128000,
+        max_completion_tokens: dynamicModel?.max_output_tokens ?? 4096,
         apiMode: provider.apiMode === "auto" ? "openai" : (provider.apiMode ?? "openai"),
         enable_thinking: false,
         include_reasoning_in_request: true,
-        thinkingMode: "switchable",
+        thinkingMode: hasReasoningEfforts ? "reasoning_effort" : "switchable",
         headers: provider.headers,
         delay: provider.delay,
         family: providerId,

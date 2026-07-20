@@ -456,6 +456,7 @@ async function showModelWizard(existing?: ProviderModelDef): Promise<ProviderMod
             { label: "switchable", description: l10n("User can enable or disable thinking") },
             { label: "always", description: l10n("Thinking always enabled (model requires it)") },
             { label: "adaptive", description: l10n("User can choose disabled or automatic") },
+            { label: "reasoning_effort", description: l10n("Use reasoning_effort only (no thinking field)") },
         ],
         {
             title: isEdit ? l10n("Edit Model") : l10n("Add Model"),
@@ -465,7 +466,7 @@ async function showModelWizard(existing?: ProviderModelDef): Promise<ProviderMod
         },
     );
     if (!thinkingPick) { return null; }
-    const thinkingMode = thinkingPick.label as "switchable" | "always" | "adaptive";
+    const thinkingMode = thinkingPick.label as "switchable" | "always" | "adaptive" | "reasoning_effort";
 
     // Step 5: Context length
     const ctxStr = await vscode.window.showInputBox({
