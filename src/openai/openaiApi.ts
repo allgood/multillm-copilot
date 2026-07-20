@@ -269,7 +269,9 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
         // Thinking mode (OpenAI-compatible format: {"thinking": {"type": "enabled"}})
         // Only send thinking param when model explicitly enables it.
         // Models that don't support thinking get no thinking field at all.
-        if (um?.enable_thinking === true) {
+        // Models with thinkingMode "always" (e.g., Kimi) have native thinking always on
+        // and may reject an explicit thinking parameter — skip it for them.
+        if (um?.enable_thinking === true && um?.thinkingMode !== "always") {
             if (um?.reasoning_effort === 'adaptive') {
                 rb.thinking = { type: "adaptive" };
             } else {

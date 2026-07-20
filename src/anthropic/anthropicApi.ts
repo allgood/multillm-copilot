@@ -270,7 +270,9 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 
 		// Add thinking mode (Anthropic-compatible format)
 		// Only send thinking param when model explicitly enables it.
-		if (um?.enable_thinking === true) {
+		// Models with thinkingMode "always" (e.g., Kimi, MiniMax M2.5/M2.7) have native
+		// thinking always on and may reject an explicit thinking parameter — skip it.
+		if (um?.enable_thinking === true && um?.thinkingMode !== "always") {
 			if (um?.reasoning_effort === 'adaptive') {
 				rb.thinking = { type: "adaptive" };
 			} else {
