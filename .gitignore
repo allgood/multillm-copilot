@@ -5,7 +5,7 @@ node_modules/
 out/
 
 # VSIX package
-extension.vsix
+*.vsix
 
 # VS Code
 .vscode/settings.json
