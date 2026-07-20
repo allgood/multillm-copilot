@@ -7,6 +7,7 @@
 	"command.abortCommit": "中止提交消息生成",
 	"command.setModelPreset": "设置模型预设",
 	"command.manageProviders": "管理提供商",
+	"command.rescanModels": "重新扫描模型",
 	"config.title": "Multi-LLM Provider for Copilot",
 	"config.providers.desc": "LLM 提供商列表。每个提供商定义 Base URL、API 模式、模型列表等信息。模型将在 Copilot Chat 模型选择器中按 group 字段分组显示，enable 控制是否启用。",
 	"config.commitLanguage.desc": "生成提交消息的语言。'auto' 从最近的提交中自动检测语言。",

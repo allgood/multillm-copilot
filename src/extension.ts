@@ -6,7 +6,7 @@ import { l10n, l10nFormat } from "./localize";
 import type { ModelPreset } from "./types";
 import { abortCommitGeneration, generateCommitMsg } from "./gitCommit/commitMessageGenerator";
 import { TokenizerManager } from "./tokenizer/tokenizerManager";
-import { getProviders, getProviderApiKey, storeProviderApiKey, deleteProviderApiKey } from "./providers";
+import { getProviders, getProviderApiKey, storeProviderApiKey, deleteProviderApiKey, rescanProviderModels } from "./providers";
 import { manageProvidersCommand } from "./providerEditor";
 import type { ProviderConfig } from "./types";
 
@@ -77,6 +77,77 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand("multiLLM.manageProviders", () => {
             manageProvidersCommand(context.secrets);
+        })
+    );
+
+    // ── Rescan models ────────────────────────────────────────────────
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("multiLLM.rescanModels", async () => {
+            const providers = getProviders();
+            if (providers.length === 0) {
+                vscode.window.showInformationMessage(l10n("No providers configured. Add providers in settings."));
+                return;
+            }
+
+            interface RescanQuickPickItem extends vscode.QuickPickItem {
+                providerId?: string;
+            }
+
+            const allItem: RescanQuickPickItem = {
+                label: "$(refresh) " + l10n("All Providers"),
+                description: l10n("Rescan dynamic models for all providers"),
+            };
+
+            const items: RescanQuickPickItem[] = [
+                allItem,
+                { label: "", kind: vscode.QuickPickItemKind.Separator },
+                ...providers.map((p) => ({
+                    label: p.label,
+                    description: p.modelsBaseUrl
+                        ? l10nFormat("Dynamic models URL: {0}", p.modelsBaseUrl)
+                        : l10n("Static models only"),
+                    providerId: p.id,
+                })),
+            ];
+
+            const picked = await vscode.window.showQuickPick(items, {
+                title: l10n("Rescan Models"),
+                placeHolder: l10n("Select a provider to rescan"),
+                ignoreFocusOut: true,
+            });
+            if (!picked) { return; }
+
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: l10n("Rescanning models..."),
+                cancellable: false,
+            }, async () => {
+                const results = await rescanProviderModels(context.secrets, picked.providerId);
+                const totalModels = results.reduce((sum, r) => sum + r.modelCount, 0);
+                const failures = results.filter((r) => r.error);
+
+                if (failures.length > 0) {
+                    const details = failures.map((f) => `${f.providerId}: ${f.error}`).join("\n");
+                    vscode.window.showWarningMessage(
+                        l10nFormat(
+                            "Rescanned {0} providers, found {1} models. {2} failed.",
+                            String(results.length),
+                            String(totalModels),
+                            String(failures.length)
+                        ) + "\n" + details,
+                        { modal: false }
+                    );
+                } else {
+                    vscode.window.showInformationMessage(
+                        l10nFormat(
+                            "Rescanned {0} providers, found {1} models.",
+                            String(results.length),
+                            String(totalModels)
+                        )
+                    );
+                }
+            });
         })
     );
 

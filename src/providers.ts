@@ -113,6 +113,52 @@ async function resolveDynamicModels(provider: ProviderConfig, apiKey?: string): 
 }
 
 /**
+ * Clear the dynamic model cache for one provider or all providers.
+ */
+export function clearModelCache(providerId?: string): void {
+    if (providerId) {
+        modelCache.delete(providerId);
+    } else {
+        modelCache.clear();
+    }
+}
+
+/**
+ * Rescan dynamic models for a specific provider or all enabled providers.
+ * Forces a fresh fetch from each provider's modelsBaseUrl and updates the cache.
+ * Returns per-provider results including the number of models found and any error.
+ */
+export async function rescanProviderModels(
+    secrets: vscode.SecretStorage,
+    providerId?: string,
+): Promise<{ providerId: string; modelCount: number; error?: string }[]> {
+    const providers = getProviders().filter((p) => !providerId || p.id === providerId);
+    const results: { providerId: string; modelCount: number; error?: string }[] = [];
+
+    for (const provider of providers) {
+        if (!provider.modelsBaseUrl) {
+            results.push({ providerId: provider.id, modelCount: 0 });
+            continue;
+        }
+
+        modelCache.delete(provider.id);
+
+        try {
+            const apiKey = await getProviderApiKey(provider.id, secrets);
+            const models = await fetchDynamicModels(provider.modelsBaseUrl, apiKey);
+            modelCache.set(provider.id, { models, timestamp: Date.now() });
+            results.push({ providerId: provider.id, modelCount: models.length });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            results.push({ providerId: provider.id, modelCount: 0, error: message });
+            logger.warn("providers.rescan-failed", { providerId: provider.id, error: message });
+        }
+    }
+
+    return results;
+}
+
+/**
  * Build LanguageModelChatInformation list from a static provider model definition.
  */
 function buildStaticModelInfo(
@@ -419,7 +465,10 @@ export function getModelConfig(compositeId: string): MultiLLMModelItem | undefin
         baseUrl: provider.baseUrl,
         vision: dynamicModel?.capabilities?.vision ?? false,
         context_length: dynamicModel?.context_window ?? 128000,
-        max_completion_tokens: dynamicModel?.max_output_tokens ?? 4096,
+        // Do NOT set max_completion_tokens from the API's max_output_tokens —
+        // that would reserve the entire context window for output, leaving no
+        // room for input messages. Let the API use its own default.
+        max_completion_tokens: undefined,
         apiMode: provider.apiMode === "auto" ? "openai" : (provider.apiMode ?? "openai"),
         enable_thinking: false,
         include_reasoning_in_request: true,

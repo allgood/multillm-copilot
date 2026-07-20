@@ -17,6 +17,17 @@ const zhCN: Record<string, string> = {
     "{0} API key cleared.": "{0} API 密钥已清除。",
     "{0} API key saved.": "{0} API 密钥已保存。",
 
+    // extension.ts - rescan models
+    "All Providers": "所有提供商",
+    "Rescan dynamic models for all providers": "重新扫描所有提供商的动态模型",
+    "Dynamic models URL: {0}": "动态模型 URL: {0}",
+    "Static models only": "仅静态模型",
+    "Rescan Models": "重新扫描模型",
+    "Select a provider to rescan": "选择要重新扫描的提供商",
+    "Rescanning models...": "正在重新扫描模型...",
+    "Rescanned {0} providers, found {1} models.": "已重新扫描 {0} 个提供商，发现 {1} 个模型。",
+    "Rescanned {0} providers, found {1} models. {2} failed.": "已重新扫描 {0} 个提供商，发现 {1} 个模型。{2} 个失败。",
+
     // provider.ts
     "API key not found for this provider. Please set it in settings.": "未找到此提供商的 API 密钥。请在设置中配置。",
     "Invalid base URL configuration.": "无效的 Base URL 配置。",

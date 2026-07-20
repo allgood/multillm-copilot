@@ -47,6 +47,7 @@
 | **超时控制** | 可配置的请求超时时间（默认 10 分钟） |
 | **立即取消** | 取消请求时通过 `reader.cancel()` 立即中断流式读取，停止后台接收 |
 | **视觉代理配置** | 支持通过设置 `opencodego.visionProxyModel`、`opencodego.visionProxyThinking` 配置图片代理所使用的视觉模型和思考模式。`opencodego.visionProxyThinking` 默认关闭，关闭时内部请求通过 `modelOptions.thinking={ type: false }` / `reasoning_effort="disabled"` 禁用视觉模型思考，最终 OpenAI 兼容请求体发送 `thinking: { type: false }` |
+| **动态模型重新扫描** | 通过命令面板执行 `Multi-LLM: Rescan Models`，可针对任意启用的提供商（或全部提供商）强制重新拉取 `/v1/models` 动态模型列表，绕过 5 分钟缓存，立即刷新模型选择器数据 |
 | **安装欢迎页 (Walkthrough)** | 首次安装且未配置 API Key 时自动打开引导向导，指引用户设置 API Key 和打开语言模型管理器。包含 3 个步骤：设置 API Key、显示模型、高级设置。通过 `onStartupFinished` 激活事件确保在 VS Code 启动后立即检测 |
 
 ### 1.3 模型清单
@@ -406,7 +407,8 @@ src/
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `extension.ts` | ~210 | 扩展激活/停用，注册 Provider 和 6 条命令，首次安装欢迎页引导 |
+| `extension.ts` | ~210 | 扩展激活/停用，注册 Provider 和 7 条命令（含新增"重新扫描模型"），首次安装欢迎页引导 |
+| `providers.ts` | ~320 | 多提供商配置读取、动态模型缓存、API 密钥管理、模型配置解析；新增 `clearModelCache` 与 `rescanProviderModels` |
 | `provider.ts` | ~700 | 实现 `LanguageModelChatProvider`，处理聊天请求全流程及图片代理多轮循环处理 |
 | `models.ts` | ~230 | 17 个内置模型定义，模型配置查询（所有模型声明 `imageInput: true`） |
 | `types.ts` | ~95 | `OpenCodeGoModelItem`, `ModelPreset`, `ModelsResponse`, `RetryConfig` 等类型 |
@@ -437,7 +439,7 @@ src/
 ### 4.1 `src/extension.ts`
 
 #### `activate(context: vscode.ExtensionContext): void`
-扩展激活入口。初始化日志、分词器、状态栏；注册 `LanguageModelChatProvider`；注册六条命令（设置 API Key、获取 API Key 网址、打开扩展设置、生成 Git 提交消息、中止生成、设置模型预设）；首次安装时调用 `showWelcomeIfNeeded()` 显示欢迎页引导。
+扩展激活入口。初始化日志、分词器、状态栏；注册 `LanguageModelChatProvider`；注册七条命令（设置 API Key、打开扩展设置、生成 Git 提交消息、中止生成、设置模型预设、管理提供商、重新扫描模型）；首次安装时调用 `showWelcomeIfNeeded()` 显示欢迎页引导。
 
 #### `showWelcomeIfNeeded(context: vscode.ExtensionContext): Promise<void>`
 检查是否已显示过欢迎页（通过 `globalState` 的 `WELCOME_SHOWN_KEY` 标记）。如果已标记或已有 API Key，直接返回；否则通过 `workbench.action.openWalkthrough` 命令打开 Walkthrough 页面并标记为已显示。静默处理异常，不阻塞扩展激活。
@@ -447,7 +449,36 @@ src/
 
 ---
 
-### 4.2 `src/provider.ts`
+### 4.1.1 `multiLLM.rescanModels` 命令
+
+#### 命令行为
+通过命令面板执行 `Multi-LLM: Rescan Models` 触发。流程：
+1. 获取当前启用的提供商列表；若为空则提示用户前往设置。
+2. 弹出 QuickPick，顶部为"所有提供商"选项，下方列出每个启用的提供商（带 `modelsBaseUrl` 的显示动态模型 URL，否则显示"仅静态模型"）。
+3. 用户选择后显示进度通知"正在重新扫描模型..."。
+4. 调用 `rescanProviderModels(secrets, providerId?)` 强制清除对应提供商缓存并重新拉取 `/v1/models`。
+5. 完成后显示结果：成功时显示"已重新扫描 X 个提供商，发现 Y 个模型"；部分失败时显示警告并列出失败详情。
+
+---
+
+### 4.2 `src/providers.ts`
+
+#### `clearModelCache(providerId?: string): void`
+清除动态模型缓存。若传入 `providerId` 则仅清除该提供商的缓存；否则清除全部缓存。
+
+#### `rescanProviderModels(secrets: vscode.SecretStorage, providerId?: string): Promise<{ providerId: string; modelCount: number; error?: string }[]>`
+强制重新扫描指定提供商或所有启用提供商的动态模型。步骤：
+1. 过滤出目标提供商（未传 `providerId` 则为所有启用提供商）。
+2. 对每个有 `modelsBaseUrl` 的提供商，先 `modelCache.delete(provider.id)` 清除旧缓存。
+3. 使用 `getProviderApiKey` 获取 API Key（可选），调用 `fetchDynamicModels` 拉取最新模型列表。
+4. 成功则更新缓存并记录模型数量；失败则记录错误信息但不抛出，保持与其他调用兼容。
+5. 返回每个提供商的扫描结果（含模型数或错误信息）。
+
+无 `modelsBaseUrl` 的提供商返回 `modelCount: 0`。
+
+---
+
+### 4.3 `src/provider.ts`
 
 #### `class OpenCodeGoChatModelProvider implements LanguageModelChatProvider`
 核心 Provider 类。

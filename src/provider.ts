@@ -367,36 +367,6 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
 
                 const url = `${BASE_URL.replace(/\/+$/, "")}/chat/completions`;
 
-                // Log request structure for debugging
-                const bodyKeys = Object.keys(requestBody);
-                const toolNames = Array.isArray(requestBody.tools)
-                    ? (requestBody.tools as any[]).map((t: any) => t.function?.name ?? t.name ?? 'unknown')
-                    : 'none';
-                logger.info("request.debug", {
-                    modelId: model.id,
-                    keys: bodyKeys,
-                    toolCount: Array.isArray(requestBody.tools) ? (requestBody.tools as any[]).length : 0,
-                    toolNames: toolNames,
-                    hasThinking: requestBody.thinking !== undefined,
-                    hasReasoningEffort: requestBody.reasoning_effort !== undefined,
-                    temperature: requestBody.temperature,
-                    top_p: requestBody.top_p,
-                    tool_choice: requestBody.tool_choice,
-                    max_tokens: requestBody.max_tokens,
-                    max_completion_tokens: requestBody.max_completion_tokens,
-                    messageCount: (requestBody.messages as any[])?.length,
-                });
-                // Write full body to temp file for inspection
-                try {
-                    const fs = await import("fs");
-                    const os = await import("os");
-                    const tmpFile = os.tmpdir() + "/multillm-debug-request.json";
-                    fs.writeFileSync(tmpFile, JSON.stringify(requestBody, null, 2));
-                    logger.info("request.debug.file", { path: tmpFile });
-                } catch {
-                    // Ignore debug file write failures
-                }
-
                 const response = await executeWithRetry(async () => {
                     const res = await dispatchFetch(url, {
                         method: "POST",

@@ -7,6 +7,7 @@
 	"command.abortCommit": "Abort Commit Message Generation",
 	"command.setModelPreset": "Set Model Preset",
 	"command.manageProviders": "Manage Providers",
+	"command.rescanModels": "Rescan Models",
 	"config.title": "Multi-LLM Provider for Copilot",
 	"config.providers.desc": "List of LLM providers. Each provider defines a base URL, API mode (openai/anthropic/auto), model list, and authentication. Models show up in Copilot Chat's model picker grouped by the provider's group field.",
 	"config.commitLanguage.desc": "Language for commit messages. 'auto' detects from recent commits.",
