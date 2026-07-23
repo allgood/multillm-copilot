@@ -174,24 +174,31 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
 
             // Inject temperature & top_p from presets or custom settings
             if (um) {
-                const tempPreset = config.get<string>("multiLLM.modelPreset", "custom");
-                if (tempPreset !== "custom") {
-                    const presets = config.get<ModelPreset[]>("multiLLM.modelPresets", []);
-                    const matchedPreset = presets.find((p) => p.id === tempPreset);
-                    if (matchedPreset) {
-                        um.temperature = matchedPreset.temperature;
+                if (um.supportsTemperature !== false) {
+                    const tempPreset = config.get<string>("multiLLM.modelPreset", "custom");
+                    if (tempPreset !== "custom") {
+                        const presets = config.get<ModelPreset[]>("multiLLM.modelPresets", []);
+                        const matchedPreset = presets.find((p) => p.id === tempPreset);
+                        if (matchedPreset) {
+                            um.temperature = matchedPreset.temperature;
+                        }
+                    } else {
+                        const userTemperature = config.get<number | null>("multiLLM.temperature", null);
+                        if (userTemperature !== null) {
+                            um.temperature = userTemperature;
+                        }
+                        const userTopP = config.get<number | null>("multiLLM.top_p", null);
+                        if (userTopP !== null) {
+                            um.top_p = userTopP;
+                        } else {
+                            // Keep top_p undefined so the model uses its default
+                            um.top_p = undefined;
+                        }
                     }
                 } else {
-                    const userTemperature = config.get<number | null>("multiLLM.temperature", null);
-                    if (userTemperature !== null) {
-                        um.temperature = userTemperature;
-                    }
-                    const userTopP = config.get<number | null>("multiLLM.top_p", null);
-                    if (userTopP !== null) {
-                        um.top_p = userTopP;
-                    } else {
-                        um.top_p = undefined;
-                    }
+                    // Model does not support temperature; ensure it's not sent
+                    um.temperature = undefined;
+                    um.top_p = undefined;
                 }
             }
 
@@ -644,7 +651,9 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                         body.max_tokens = params.um.max_tokens;
                     }
                     if (params.um?.temperature !== undefined && params.um.temperature !== null) {
-                        body.temperature = params.um.temperature;
+                        if (params.um.supportsTemperature !== false) {
+                            body.temperature = params.um.temperature;
+                        }
                     }
                     const systemContent = (params.api as any)._systemContent as string | undefined;
                     if (systemContent) { body.system = systemContent; }
@@ -684,6 +693,10 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                         }
                     }
                     if (anthropicToolList.length > 0) { body.tools = anthropicToolList; }
+                    // Allow the model to freely call ask_image again in this round
+                    if (hasLocalImages) {
+                        body.tool_choice = { type: "auto" };
+                    }
 
                     const normalizedUrl = params.baseUrl.replace(/\/+$/, "");
                     const url = normalizedUrl.endsWith("/v1")
@@ -708,9 +721,16 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                         await api.processStreamingResponse(response.body, params.trackingProgress, params.token);
                     }
                 } else {
+                    // OpenAI format: append assistant tool_call + tool result
+                    // Use the reasoning_content captured from the previous round's streaming response.
+                    // DeepSeek thinking mode requires the original reasoning_content to be echoed back
+                    // verbatim on every assistant message that follows a tool call — hardcoded strings
+                    // or empty values cause the model to break (infinite tool loops or 400 errors).
+                    const prevReasoning = (api as any)._capturedReasoningContent ?? "";
+                    (api as any)._capturedReasoningContent = "";
                     currentMessages.push({
                         role: "assistant" as const,
-                        reasoning_content: `Calling ${intercepted.name} tool (round ${round}) to get information about the user's attached image(s).`,
+                        reasoning_content: prevReasoning,
                         tool_calls: [
                             {
                                 id: intercepted.id,
@@ -735,7 +755,9 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                         stream_options: { include_usage: true },
                     };
                     if (params.um?.temperature !== undefined && params.um.temperature !== null) {
-                        body.temperature = params.um.temperature;
+                        if (params.um.supportsTemperature !== false) {
+                            body.temperature = params.um.temperature;
+                        }
                     }
                     if (params.um?.top_p !== undefined && params.um.top_p !== null) {
                         body.top_p = params.um.top_p;
@@ -743,11 +765,13 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     if (params.um?.max_completion_tokens !== undefined) {
                         body.max_completion_tokens = params.um.max_completion_tokens;
                     }
-                    if (params.um?.enable_thinking !== false && params.um?.reasoning_effort !== undefined) {
+                    if (params.um?.enable_thinking !== false && params.um?.reasoning_effort !== undefined && params.um.reasoning_effort !== 'adaptive') {
                         body.reasoning_effort = params.um.reasoning_effort;
                     }
                     if (params.um?.enable_thinking === true) {
                         body.thinking = { type: "enabled" };
+                    } else {
+                        body.thinking = { type: "disabled" };
                     }
 
                     const openaiToolList: any[] = [];
@@ -759,7 +783,13 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                             openaiToolList.push(ASK_WITH_MULTI_IMAGE_TOOL_DEF);
                         }
                     }
-                    if (openaiToolList.length > 0) { body.tools = openaiToolList; }
+                    if (openaiToolList.length > 0) {
+                        body.tools = openaiToolList;
+                    }
+                    // Allow the model to freely call ask_image again in this round
+                    if (hasLocalImages) {
+                        body.tool_choice = "auto";
+                    }
 
                     const url = `${params.baseUrl.replace(/\/+$/, "")}/chat/completions`;
                     const response = await executeWithRetry(async () => {

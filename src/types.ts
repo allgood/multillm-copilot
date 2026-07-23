@@ -108,6 +108,8 @@ export interface MultiLLMModelItem {
     apiMode?: string;
     /** Whether this model supports switching thinking on/off ("switchable"), always has it ("always"), only disabled/adaptive ("adaptive"), or uses reasoning_effort only ("reasoning_effort") */
     thinkingMode?: "switchable" | "always" | "adaptive" | "reasoning_effort";
+    /** Whether this model supports setting temperature/top_p. Default true. */
+    supportsTemperature?: boolean;
     /** Custom HTTP headers */
     headers?: Record<string, string>;
 

@@ -245,7 +245,9 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
     ): Record<string, unknown> {
         // temperature
         if (um?.temperature !== undefined && um.temperature !== null) {
-            rb.temperature = um.temperature;
+            if (um.supportsTemperature !== false) {
+                rb.temperature = um.temperature;
+            }
         }
 
         // top_p
@@ -362,6 +364,9 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
     ): Promise<void> {
         const modelId = this._modelId;
         logger.debug("openai.stream.start", { modelId });
+
+        // Reset mutable state to prevent carryover from previous rounds
+        this._resetStreamState();
 
         const reader = responseBody.getReader();
         const decoder = new TextDecoder();
@@ -517,6 +522,9 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                     text = maybeThinking;
                 }
                 if (text) {
+                    // Accumulate reasoning content for echo-back in tool call proxy rounds
+                    // DeepSeek thinking mode requires raw reasoning_content to be passed back verbatim
+                    this._capturedReasoningContent += text;
                     this.bufferThinkingContent(text, progress);
                     emitted = true;
                 }

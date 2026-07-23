@@ -255,7 +255,9 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 
 		// Add temperature
 		if (um?.temperature !== undefined && um.temperature !== null) {
-			rb.temperature = um.temperature;
+			if (um.supportsTemperature !== false) {
+				rb.temperature = um.temperature;
+			}
 		}
 
 		// Add top_p if configured
@@ -355,6 +357,9 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 	): Promise<void> {
 		const modelId = this._modelId;
 		logger.debug("anthropic.stream.start", { modelId });
+
+		// Reset mutable state to prevent carryover from previous rounds
+		this._resetStreamState();
 
 		const reader = responseBody.getReader();
 		const decoder = new TextDecoder();

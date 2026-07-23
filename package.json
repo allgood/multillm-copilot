@@ -9,7 +9,7 @@
 		"chat",
 		"copilot",
 		"github-copilot",
-		"language-model",
+		"language-models",
 		"llm",
 		"openai",
 		"anthropic",
@@ -414,7 +414,7 @@
 					"maximum": 1,
 					"description": "%config.top_p.desc%"
 				},
-				"multiLLM.modelPresets": {
+			"multiLLM.modelPresets": {
 					"type": "array",
 					"default": [
 						{

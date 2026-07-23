@@ -78,6 +78,14 @@ export abstract class CommonApi<TMessage, TRequestBody> {
     public interceptedToolCall: InterceptedToolCall | null = null;
 
     /**
+     * Captures the reasoning_content from the streaming response so it can be
+     * echoed back in the next round's assistant message. DeepSeek thinking mode
+     * requires the original reasoning_content to be passed back verbatim.
+     * Reset to "" at the start of each streaming round.
+     */
+    public _capturedReasoningContent: string = "";
+
+    /**
      * Locally stored images collected during convertMessages.
      * Lives on the instance only — no global Map, automatically GC'd.
      */
@@ -241,6 +249,31 @@ export abstract class CommonApi<TMessage, TRequestBody> {
             return { ...parameters, endLine: startLine + defaultLines };
         }
         return parameters;
+    }
+
+    /**
+     * Reset mutable streaming state. Must be called at the start of each
+     * processStreamingResponse invocation to prevent state carryover between
+     * rounds (e.g., first round → vision proxy → second round).
+     * Optional fields like _onUsage and _capturedReasoningContent are left as-is
+     * because they are intentionally managed across rounds.
+     */
+    protected _resetStreamState(): void {
+        this._toolCallBuffers.clear();
+        this._completedToolCallIndices.clear();
+        this._hasEmittedAssistantText = false;
+        this._hasEmittedText = false;
+        this._hasEmittedThinking = false;
+        this._emittedBeginToolCallsHint = false;
+        this._xmlThinkActive = false;
+        this._xmlThinkDetectionAttempted = false;
+        this._currentThinkingId = null;
+        this._thinkingBuffer = "";
+        if (this._thinkingFlushTimer) {
+            clearTimeout(this._thinkingFlushTimer);
+            this._thinkingFlushTimer = null;
+        }
+        this.interceptedToolCall = null;
     }
 
     /**
