@@ -1,0 +1,11 @@
+{
+  "name": "opencode-proxy-debug",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local HTTP proxy to debug the OpenCode Go extension traffic",
+  "scripts": {
+    "start": "node proxy.mjs",
+    "example": "node proxy.mjs --target https://api.opencode.ai --port 3456"
+  }
+}
