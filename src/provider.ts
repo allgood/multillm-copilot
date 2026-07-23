@@ -768,10 +768,8 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     if (params.um?.enable_thinking !== false && params.um?.reasoning_effort !== undefined && params.um.reasoning_effort !== 'adaptive') {
                         body.reasoning_effort = params.um.reasoning_effort;
                     }
-                    if (params.um?.enable_thinking === true) {
+                    if (params.um?.enable_thinking === true && params.um?.thinkingMode !== "always" && params.um?.thinkingMode !== "reasoning_effort") {
                         body.thinking = { type: "enabled" };
-                    } else {
-                        body.thinking = { type: "disabled" };
                     }
 
                     const openaiToolList: any[] = [];

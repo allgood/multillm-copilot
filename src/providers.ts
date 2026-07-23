@@ -475,7 +475,10 @@ export function getModelConfig(compositeId: string): MultiLLMModelItem | undefin
         baseUrl: provider.baseUrl,
         vision: dynamicModel?.capabilities?.vision ?? false,
         context_length: dynamicModel?.context_window ?? 128000,
-        max_completion_tokens: dynamicModel?.max_output_tokens ?? 4096,
+        // Do NOT set max_completion_tokens from the API's max_output_tokens —
+        // that would reserve the entire context window for output, leaving no
+        // room for input messages. Let the API use its own default.
+        max_completion_tokens: undefined,
         apiMode: provider.apiMode === "auto" ? "openai" : (provider.apiMode ?? "openai"),
         enable_thinking: false,
         include_reasoning_in_request: true,
