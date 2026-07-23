@@ -9,7 +9,7 @@
 		"chat",
 		"copilot",
 		"github-copilot",
-		"language-models",
+		"language-model",
 		"llm",
 		"openai",
 		"anthropic",
@@ -160,7 +160,6 @@
 									"name": "Kimi K2.7",
 									"vision": true,
 									"thinkingMode": "always",
-									"supportsTemperature": false,
 									"contextLength": 262144,
 									"maxOutputTokens": 16384
 								},
@@ -300,8 +299,7 @@
 							"apiMode": "openai",
 							"group": "OpenAI",
 							"enabled": false,
-							"modelsBaseUrl": "https://api.openai.com/v1",
-							"autoDiscovery": true
+							"modelsBaseUrl": "https://api.openai.com/v1"
 						},
 						{
 							"id": "anthropic",
@@ -322,16 +320,6 @@
 							]
 						}
 					],
-					"items": {
-						"type": "object",
-						"properties": {
-							"autoDiscovery": {
-								"type": "boolean",
-								"default": false,
-								"description": "When true, fetch dynamic models from modelsBaseUrl even when static models are defined."
-							}
-						}
-					},
 					"description": "%config.providers.desc%"
 				},
 				"multiLLM.commitLanguage": {
@@ -426,7 +414,7 @@
 					"maximum": 1,
 					"description": "%config.top_p.desc%"
 				},
-			"multiLLM.modelPresets": {
+				"multiLLM.modelPresets": {
 					"type": "array",
 					"default": [
 						{
@@ -502,7 +490,7 @@
 		"compile": "tsc -p ./",
 		"lint": "eslint",
 		"watch": "tsc -watch -p ./",
-		"build": "npx @vscode/vsce package -o multillm-copilot.vsix",
+		"build": "npm run compile && npx @vscode/vsce package -o extension.vsix",
 		"postinstall": "node scripts/copy-tokenizer.js"
 	},
 	"dependencies": {
