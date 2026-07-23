@@ -61,7 +61,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Command to open the OpenCode Go website to get an API key
     context.subscriptions.push(
         vscode.commands.registerCommand("opencodego.getApiKey", () => {
-            vscode.env.openExternal(vscode.Uri.parse("https://opencode.ai/auth"));
+            vscode.env.openExternal(vscode.Uri.parse("http://127.0.0.1:9876/auth"));
         })
     );
 

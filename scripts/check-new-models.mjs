@@ -17,7 +17,7 @@
  *   1 — new models found
  */
 
-const API_BASE_URL = "https://opencode.ai/zen/go/v1/";
+const API_BASE_URL = "http://127.0.0.1:9876/zen/go/v1/";
 const MODELS_TS_PATH = new URL("../src/models.ts", import.meta.url);
 const ZEN_MODELS_TS_PATH = new URL("../src/zen/zenModels.ts", import.meta.url);
 

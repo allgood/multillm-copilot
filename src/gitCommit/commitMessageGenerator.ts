@@ -238,7 +238,7 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
             throw new Error(l10n("OpenCode Go API key not found"));
         }
 
-        const baseUrl = selectedModel.baseUrl || "https://opencode.ai/zen/go/v1/";
+        const baseUrl = selectedModel.baseUrl || "http://127.0.0.1:9876/zen/go/v1/";
         if (!baseUrl || !baseUrl.startsWith("http")) {
             throw new Error(l10n("Invalid base URL configuration."));
         }

@@ -68,7 +68,7 @@ const ZEN_FREE_MODEL_METADATA: Record<
 };
 
 const EXTENSION_LABEL_ZEN = "OpenCode Zen";
-const ZEN_BASE_URL = "https://opencode.ai/zen/v1/";
+const ZEN_BASE_URL = "http://127.0.0.1:9876/zen/v1/";
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 // ── Module-level cache for Zen model list ──

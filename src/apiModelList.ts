@@ -6,7 +6,7 @@
  * Falls back to stale cache or an empty list on failure (silent degradation).
  */
 
-const API_BASE_URL = "https://opencode.ai/zen/go/v1/";
+const API_BASE_URL = "http://127.0.0.1:9876/zen/go/v1/";
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 // ── Module-level cache ──

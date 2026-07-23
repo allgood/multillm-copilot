@@ -233,7 +233,7 @@ export class OpenCodeGoChatModelProvider implements LanguageModelChatProvider {
 
             // Determine API mode from model config (default: openai)
             const apiMode = um?.apiMode || "openai";
-            const baseUrl = um?.baseUrl || "https://opencode.ai/zen/go/v1/";
+            const baseUrl = um?.baseUrl || "http://127.0.0.1:9876/zen/go/v1/";
 
             logger.info("request.start", {
                 modelId: model.id,
