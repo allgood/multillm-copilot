@@ -27,6 +27,7 @@ import {
     mapRole,
     storeDataUriImages,
     replaceDataUriImages,
+    modelSupportsTemperature,
 } from "../utils";
 
 import { CommonApi, StreamUsage } from "../commonApi";
@@ -245,7 +246,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
     ): Record<string, unknown> {
         // temperature
         if (um?.temperature !== undefined && um.temperature !== null) {
-            if (um.supportsTemperature !== false) {
+            if (modelSupportsTemperature(um.id, um.supportsTemperature)) {
                 rb.temperature = um.temperature;
             }
         }
@@ -269,13 +270,10 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
         }
 
         // Thinking mode (OpenAI-compatible format: {"thinking": {"type": "enabled"}})
-        // Only send thinking param when model explicitly enables it.
-        // Models that don't support thinking get no thinking field at all.
-        // Models with thinkingMode "always" (e.g., Kimi) have native thinking always on
-        // and may reject an explicit thinking parameter — skip it for them.
-        // Models with thinkingMode "reasoning_effort" use only the reasoning_effort
-        // parameter (standard OpenAI format) and reject the thinking field — skip it.
-        if (um?.enable_thinking === true && um?.thinkingMode !== "always" && um?.thinkingMode !== "reasoning_effort") {
+        // Always send an explicit thinking parameter so the upstream provider
+        // receives a consistent request across conversation turns. This matches
+        // the behavior of the reference implementation and the working captures.
+        if (um?.enable_thinking === true) {
             if (um?.reasoning_effort === 'adaptive') {
                 rb.thinking = { type: "adaptive" };
             } else {
@@ -284,6 +282,8 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                     (rb.thinking as Record<string, unknown>).budget_tokens = um.thinking_budget;
                 }
             }
+        } else {
+            rb.thinking = { type: "disabled" };
         }
 
         // OpenRouter reasoning configuration

@@ -24,6 +24,27 @@ const networkErrorPatterns = [
     "NetworkError",
 ];
 
+// Model IDs that are known to reject temperature/top_p parameters.
+const MODELS_WITHOUT_TEMPERATURE = new Set<string>([
+    "kimi-k2.7-code",
+    "kimi-k3",
+]);
+
+/**
+ * Determine whether a model supports the temperature parameter.
+ * If the model config already declares a value, respect it; otherwise fall back
+ * to a hardcoded list of known temperature-incompatible models.
+ */
+export function modelSupportsTemperature(modelId: string | undefined, configValue?: boolean): boolean {
+    if (configValue === false) {
+        return false;
+    }
+    if (!modelId) {
+        return true;
+    }
+    return !MODELS_WITHOUT_TEMPERATURE.has(modelId);
+}
+
 // Model ID parsing helper
 export interface ParsedModelId {
     baseId: string;

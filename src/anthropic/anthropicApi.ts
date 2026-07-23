@@ -18,7 +18,7 @@ import type {
 	AnthropicStreamChunk,
 } from "./anthropicTypes";
 
-import { isImageMimeType, isToolResultPart, collectToolResultText, convertToolsToOpenAI, mapRole, storeDataUriImages, replaceDataUriImages } from "../utils";
+import { isImageMimeType, isToolResultPart, collectToolResultText, convertToolsToOpenAI, mapRole, storeDataUriImages, replaceDataUriImages, modelSupportsTemperature } from "../utils";
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
@@ -255,7 +255,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 
 		// Add temperature
 		if (um?.temperature !== undefined && um.temperature !== null) {
-			if (um.supportsTemperature !== false) {
+			if (modelSupportsTemperature(um.id, um.supportsTemperature)) {
 				rb.temperature = um.temperature;
 			}
 		}

@@ -160,6 +160,7 @@
 									"name": "Kimi K2.7",
 									"vision": true,
 									"thinkingMode": "always",
+									"supportsTemperature": false,
 									"contextLength": 262144,
 									"maxOutputTokens": 16384
 								},
@@ -299,7 +300,8 @@
 							"apiMode": "openai",
 							"group": "OpenAI",
 							"enabled": false,
-							"modelsBaseUrl": "https://api.openai.com/v1"
+							"modelsBaseUrl": "https://api.openai.com/v1",
+							"autoDiscovery": true
 						},
 						{
 							"id": "anthropic",
@@ -320,6 +322,16 @@
 							]
 						}
 					],
+					"items": {
+						"type": "object",
+						"properties": {
+							"autoDiscovery": {
+								"type": "boolean",
+								"default": false,
+								"description": "When true, fetch dynamic models from modelsBaseUrl even when static models are defined."
+							}
+						}
+					},
 					"description": "%config.providers.desc%"
 				},
 				"multiLLM.commitLanguage": {

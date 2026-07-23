@@ -3,6 +3,7 @@ import type { LanguageModelChatInformation } from "vscode";
 import type { ProviderConfig, ProviderModelDef, MultiLLMModelItem } from "./types";
 import { l10n } from "./localize";
 import { logger } from "./logger";
+import { modelSupportsTemperature } from "./utils";
 
 /**
  * Five-minute cache for dynamic model list fetches.
@@ -260,7 +261,6 @@ function buildDynamicModelInfo(
     group: string,
     providerId: string,
 ): LanguageModelChatInformation {
-    const vision = model.capabilities?.vision ?? false;
     const supportsReasoning = model.capabilities?.reasoning ?? false;
     const ctx = model.context_window ?? 128000;
     const maxOut = model.max_output_tokens ?? 4096;
@@ -355,8 +355,11 @@ export async function getAllModelInfos(
             }
         }
 
-        // Dynamic models (only those not already defined statically)
-        if (provider.modelsBaseUrl) {
+        // Dynamic models (only when auto-discovery is enabled and not shadowing
+        // hardcoded static models for included providers)
+        const hasStaticModels = provider.models && provider.models.length > 0;
+        const autoDiscoveryEnabled = provider.autoDiscovery ?? !hasStaticModels;
+        if (provider.modelsBaseUrl && autoDiscoveryEnabled) {
             const apiKey = await getProviderApiKey(provider.id, secrets);
             const dynamicModels = await resolveDynamicModels(provider, apiKey);
             for (const model of dynamicModels) {
@@ -453,7 +456,14 @@ export function getModelConfig(compositeId: string): MultiLLMModelItem | undefin
         }
     }
 
-    // Try dynamic model — check cache for reasoning_efforts metadata
+    // Try dynamic model — only when auto-discovery is enabled for this provider.
+    // Providers that already define hardcoded models default to no discovery so
+    // those definitions are never overridden by dynamically fetched metadata.
+    const hasStaticModels = provider.models && provider.models.length > 0;
+    if (provider.autoDiscovery === false || (hasStaticModels && provider.autoDiscovery !== true)) {
+        return undefined;
+    }
+
     const cached = modelCache.get(providerId);
     const dynamicModel = cached?.models.find((m) => m.id === modelId);
     const hasReasoningEfforts = dynamicModel?.reasoning_efforts && dynamicModel.reasoning_efforts.length > 0;
@@ -465,14 +475,12 @@ export function getModelConfig(compositeId: string): MultiLLMModelItem | undefin
         baseUrl: provider.baseUrl,
         vision: dynamicModel?.capabilities?.vision ?? false,
         context_length: dynamicModel?.context_window ?? 128000,
-        // Do NOT set max_completion_tokens from the API's max_output_tokens —
-        // that would reserve the entire context window for output, leaving no
-        // room for input messages. Let the API use its own default.
-        max_completion_tokens: undefined,
+        max_completion_tokens: dynamicModel?.max_output_tokens ?? 4096,
         apiMode: provider.apiMode === "auto" ? "openai" : (provider.apiMode ?? "openai"),
         enable_thinking: false,
         include_reasoning_in_request: true,
         thinkingMode: hasReasoningEfforts ? "reasoning_effort" : "switchable",
+        supportsTemperature: modelSupportsTemperature(modelId),
         headers: provider.headers,
         delay: provider.delay,
         family: providerId,
@@ -496,6 +504,7 @@ function defToModelItem(def: ProviderModelDef, provider: ProviderConfig): MultiL
         include_reasoning_in_request: def.includeReasoningInRequest ?? true,
         thinkingMode: def.thinkingMode,
         reasoning_effort: def.defaultReasoningEffort,
+        supportsTemperature: modelSupportsTemperature(def.id, def.supportsTemperature),
         extra: def.extra,
         headers: provider.headers,
         delay: provider.delay,

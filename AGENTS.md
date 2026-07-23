@@ -487,6 +487,27 @@ src/
 
 无 `modelsBaseUrl` 的提供商返回 `modelCount: 0`。
 
+#### `getAllModelInfos(secrets: vscode.SecretStorage): Promise<LanguageModelChatInformation[]>`
+聚合所有启用提供商的模型信息。流程：
+1. 遍历启用的提供商。
+2. 对每个提供商，先加入其硬编码的 `models` 列表（通过 `defToModelItem` 转换）。
+3. 仅当 `autoDiscovery` 为 `true`（或未配置且没有静态模型）时，才从 `modelsBaseUrl` 拉取动态模型并合并；动态模型不会覆盖同 ID 的硬编码模型。
+4. 返回聚合后的模型信息数组。
+
+#### `getModelConfig(compositeId: string): MultiLLMModelItem | undefined`
+按 `providerId/modelId` 格式的复合 ID 查找运行时模型配置。查找顺序：
+1. 解析 `providerId` 与 `modelId`。
+2. 在该提供商的硬编码 `models` 中查找；命中则返回 `defToModelItem(def, provider)`。
+3. 若该提供商 `autoDiscovery` 为 `true`（或未配置且没有静态模型），才尝试从动态模型缓存中查找；命中则返回动态模型运行时配置。
+4. 否则返回 `undefined`。
+
+该函数确保已定义硬编码模型的提供商不会被动态发现数据覆盖，例如 `kimi-k2.7-code` 的 `supportsTemperature: false` 等属性始终生效。
+
+#### `defToModelItem(def: ProviderModelDef, provider: ProviderConfig): MultiLLMModelItem`
+将硬编码的 `ProviderModelDef` 转换为运行时 `MultiLLMModelItem`。透传字段包括：`id`、`name`/`displayName`、`vision`、`contextLength`/`context_length`、`maxOutputTokens`/`max_completion_tokens`、`apiMode`、`thinkingMode`、`defaultReasoningEffort`/`reasoning_effort`、`includeReasoningInRequest`/`include_reasoning_in_request`、`supportsTemperature`、`extra`、`headers`、`delay`、`family`（取 `provider.id`）。
+
+`enable_thinking` 默认设为 `true`，实际是否启用由 `provider.ts` 根据用户选择的推理强度动态调整。
+
 ---
 
 ### 4.3 `src/provider.ts`
@@ -565,19 +586,53 @@ src/
 
 ### 4.4 `src/types.ts`
 
-#### `interface OpenCodeGoModelItem`
-完整模型配置接口。
+#### `interface ProviderConfig`
+多 LLM 提供商配置接口。
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `id` | `string` | 提供商 ID |
+| `label` | `string` | 显示名称 |
+| `baseUrl` | `string` | 请求基础 URL |
+| `apiMode` | `"openai" \| "anthropic" \| "auto"` | API 格式 |
+| `group` | `string` | 模型选择器分组 |
+| `enabled` | `boolean` | 是否启用 |
+| `models` | `ProviderModelDef[]` (可选) | 硬编码模型定义 |
+| `modelsBaseUrl` | `string` (可选) | 动态模型列表 URL |
+| `autoDiscovery` | `boolean` (可选) | 是否从 `modelsBaseUrl` 拉取动态模型；默认无静态模型时开启，有静态模型时关闭，避免发现模型覆盖硬编码定义 |
+| `headers` | `Record<string, string>` (可选) | 自定义 HTTP 头 |
+| `delay` | `number` (可选) | 请求延迟 |
+
+#### `interface ProviderModelDef`
+多 LLM 提供商下的硬编码模型定义。
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `id` | `string` | 模型 ID |
+| `name` | `string` | 显示名称 |
+| `vision` | `boolean` | 是否支持视觉 |
+| `thinkingMode` | `"switchable" \| "always" \| "adaptive" \| "reasoning_effort"` | 思考模式 |
+| `contextLength` | `number` (可选) | 上下文长度 |
+| `maxOutputTokens` | `number` (可选) | 最大输出 Token |
+| `supportedReasoningEfforts` | `string[]` (可选) | 支持的推理力度 |
+| `defaultReasoningEffort` | `string` (可选) | 默认推理力度 |
+| `apiMode` | `"openai" \| "anthropic"` (可选) | 覆盖 API 模式 |
+| `includeReasoningInRequest` | `boolean` (可选) | 是否在请求中包含 reasoning_content |
+| `supportsTemperature` | `boolean` (可选) | 是否支持设置 temperature/top_p，默认 true；`defToModelItem` 会将其透传到运行时模型配置 |
+| `extra` | `Record<string, unknown>` (可选) | 额外请求体参数 |
+
+#### `interface MultiLLMModelItem`
+多 LLM 运行时模型配置接口（由 `ProviderModelDef` 或动态模型转换而来）。
 
 | 属性 | 类型 | 说明 |
 |------|------|------|
 | `id` | `string` | 模型 ID |
 | `owned_by` | `string` | 提供商 |
-| `configId` | `string` (可选) | 配置 ID（保留兼容） |
 | `displayName` | `string` (可选) | 显示名称 |
 | `baseUrl` | `string` (可选) | 自定义 Base URL |
 | `context_length` | `number` (可选) | 上下文长度 |
 | `vision` | `boolean` (可选) | 是否支持视觉 |
-| `max_completion_tokens` | `number` (可选) | 最大输出 Token (新标准) |
+| `max_completion_tokens` | `number` (可选) | 最大输出 Token |
 | `reasoning_effort` | `string` (可选) | 推理力度 |
 | `enable_thinking` | `boolean` (可选) | 是否启用 thinking |
 | `thinking_budget` | `number` (可选) | Thinking 预算 Token |
@@ -592,8 +647,8 @@ src/
 | `extra` | `Record<string, unknown>` (可选) | 额外请求体参数 |
 | `family` | `string` (可选) | 模型系列 |
 | `include_reasoning_in_request` | `boolean` (可选) | 是否在请求中包含推理内容 |
-| `thinkingMode` | `"switchable" \| "always"` (可选) | 思考模式类型 |
-| `supportsTemperature` | `boolean` (可选) | 是否支持设置 temperature/top_p，默认 true |
+| `thinkingMode` | `"switchable" \| "always" \| "adaptive" \| "reasoning_effort"` (可选) | 思考模式类型 |
+| `supportsTemperature` | `boolean` (可选) | 是否支持设置 temperature/top_p，默认 true；运行时配置从 `ProviderModelDef.supportsTemperature` 透传 |
 | `useForCommitGeneration` | `boolean` (可选) | 是否用于提交消息生成 |
 | `delay` | `number` (可选) | 模型专属请求延迟 |
 | `apiMode` | `string` (可选) | API 模式 |
@@ -753,6 +808,9 @@ API 实现的抽象基类。
 
 #### `getModelProviderId(model): string`
 从模型对象中提取提供商 ID，依次检查 `owned_by`、`provide`、`provider`、`ownedBy`、`owner`、`vendor` 字段。
+
+#### `modelSupportsTemperature(modelId, configValue?): boolean`
+判断模型是否支持 `temperature` 参数。优先尊重模型配置中的 `supportsTemperature` 显式声明；若未声明，则回退到硬编码的已知不支持 temperature 的模型列表（如 `kimi-k2.7-code`、`kimi-k3`）。在 `openaiApi.ts`、`anthropicApi.ts` 和 `providers.ts` 中共同使用，作为防御性兜底。
 
 #### `normalizeUserModels(models): OpenCodeGoModelItem[]`
 规范化用户自定义模型列表，为每个模型设置 `owned_by` 字段。

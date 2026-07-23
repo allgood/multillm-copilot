@@ -18,6 +18,13 @@ export interface ProviderConfig {
     models?: ProviderModelDef[];
     /** URL to fetch model list dynamically (GET /v1/models) */
     modelsBaseUrl?: string;
+    /**
+     * Whether to fetch and merge dynamic models from modelsBaseUrl.
+     * Defaults to true for providers without static models, false for providers
+     * that already define models, so discovered models never override hardcoded
+     * definitions for included providers.
+     */
+    autoDiscovery?: boolean;
     /** Custom HTTP headers */
     headers?: Record<string, string>;
     /** Whether this provider is enabled */
@@ -50,6 +57,8 @@ export interface ProviderModelDef {
     apiMode?: "openai" | "anthropic";
     /** Whether to include reasoning in request */
     includeReasoningInRequest?: boolean;
+    /** Whether this model supports setting temperature/top_p. Default true. */
+    supportsTemperature?: boolean;
     /** Extra body parameters */
     extra?: Record<string, unknown>;
 }
