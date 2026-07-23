@@ -223,7 +223,7 @@ function buildStaticModelInfo(
 
     const info: LanguageModelChatInformation = {
         id: `${providerId}:${def.id}`,
-        name: def.name,
+        name: `${group} » ${def.name}`,
         detail: group,
         tooltip: group,
         family: providerId,
@@ -264,7 +264,7 @@ function buildDynamicModelInfo(
     const supportsReasoning = model.capabilities?.reasoning ?? false;
     const ctx = model.context_window ?? 128000;
     const maxOut = model.max_output_tokens ?? 4096;
-    const name = model.id;
+    const name = `${group} / ${model.id}`;
 
     // Detect if the API uses reasoning_effort (standard OpenAI) vs thinking field.
     // Presence of reasoning_efforts array indicates the API uses reasoning_effort only.
