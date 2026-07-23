@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { LanguageModelChatInformation } from "vscode";
 import type { ProviderConfig, ProviderModelDef, MultiLLMModelItem } from "./types";
-import { l10n } from "./localize";
+import { l10n, l10nFormat } from "./localize";
 import { logger } from "./logger";
 
 /**
@@ -33,6 +33,15 @@ export interface DynamicModelInfo {
 }
 
 const modelCache = new Map<string, ModelCacheEntry>();
+
+/**
+ * Get the cached dynamic models for a provider (read-only).
+ * Returns undefined if no cache entry exists.
+ */
+export function getCachedDynamicModels(providerId: string): DynamicModelInfo[] | undefined {
+    const cached = modelCache.get(providerId);
+    return cached?.models;
+}
 
 /**
  * Read all enabled providers from configuration.
@@ -457,6 +466,7 @@ export function getModelConfig(compositeId: string): MultiLLMModelItem | undefin
     const cached = modelCache.get(providerId);
     const dynamicModel = cached?.models.find((m) => m.id === modelId);
     const hasReasoningEfforts = dynamicModel?.reasoning_efforts && dynamicModel.reasoning_efforts.length > 0;
+    const supportsReasoning = dynamicModel?.capabilities?.reasoning ?? hasReasoningEfforts;
 
     return {
         id: modelId,
@@ -465,12 +475,15 @@ export function getModelConfig(compositeId: string): MultiLLMModelItem | undefin
         baseUrl: provider.baseUrl,
         vision: dynamicModel?.capabilities?.vision ?? false,
         context_length: dynamicModel?.context_window ?? 128000,
-        // Do NOT set max_completion_tokens from the API's max_output_tokens —
-        // that would reserve the entire context window for output, leaving no
-        // room for input messages. Let the API use its own default.
-        max_completion_tokens: undefined,
+        // Use API-provided max_output_tokens when available.
+        // Some providers (e.g. Kimi) require an explicit max_tokens value
+        // and reject requests that omit it.
+        // Use max_tokens (not max_completion_tokens) for broader API compatibility.
+        max_tokens: dynamicModel?.max_output_tokens,
         apiMode: provider.apiMode === "auto" ? "openai" : (provider.apiMode ?? "openai"),
-        enable_thinking: false,
+        // Enable thinking by default when the model supports reasoning.
+        // The user can still disable it via the reasoning effort selector.
+        enable_thinking: supportsReasoning,
         include_reasoning_in_request: true,
         thinkingMode: hasReasoningEfforts ? "reasoning_effort" : "switchable",
         headers: provider.headers,
@@ -490,7 +503,7 @@ function defToModelItem(def: ProviderModelDef, provider: ProviderConfig): MultiL
         baseUrl: provider.baseUrl,
         vision: def.vision,
         context_length: def.contextLength ?? 128000,
-        max_completion_tokens: def.maxOutputTokens ?? 4096,
+        max_tokens: def.maxOutputTokens ?? 4096,
         apiMode,
         enable_thinking: true,
         include_reasoning_in_request: def.includeReasoningInRequest ?? true,
@@ -501,4 +514,218 @@ function defToModelItem(def: ProviderModelDef, provider: ProviderConfig): MultiL
         delay: provider.delay,
         family: provider.id,
     };
+}
+
+// ─── Hardcoded model sync ──────────────────────────────────────────────
+
+/**
+ * Get the hardcoded default providers from package.json.
+ * VS Code's configuration system provides the default value even when
+ * the user has overridden it in settings.
+ */
+export function getHardcodedDefaultProviders(): ProviderConfig[] {
+    const config = vscode.workspace.getConfiguration();
+    // inspect returns { key, defaultValue, globalValue, workspaceValue, ... }
+    const inspected = config.inspect<ProviderConfig[]>("multiLLM.providers");
+    return (inspected?.defaultValue as ProviderConfig[] | undefined) ?? [];
+}
+
+/**
+ * Build a lookup map: providerId -> Map<modelId, ProviderModelDef>
+ * from the hardcoded defaults.
+ */
+function buildHardcodedModelMap(): Map<string, Map<string, ProviderModelDef>> {
+    const defaults = getHardcodedDefaultProviders();
+    const map = new Map<string, Map<string, ProviderModelDef>>();
+    for (const provider of defaults) {
+        if (!provider.models) { continue; }
+        const modelMap = new Map<string, ProviderModelDef>();
+        for (const def of provider.models) {
+            modelMap.set(def.id, def);
+        }
+        map.set(provider.id, modelMap);
+    }
+    return map;
+}
+
+/**
+ * Deep-compare two ProviderModelDef objects (ignoring _hardcoded marker).
+ * Returns true if they are equivalent.
+ */
+function modelDefsEqual(a: ProviderModelDef, b: ProviderModelDef): boolean {
+    // Compare all fields except _hardcoded
+    if (a.id !== b.id) { return false; }
+    if (a.name !== b.name) { return false; }
+    if (a.vision !== b.vision) { return false; }
+    if (a.thinkingMode !== b.thinkingMode) { return false; }
+    if (a.contextLength !== b.contextLength) { return false; }
+    if (a.maxOutputTokens !== b.maxOutputTokens) { return false; }
+    if (a.apiMode !== b.apiMode) { return false; }
+    if (a.includeReasoningInRequest !== b.includeReasoningInRequest) { return false; }
+    if (!arraysEqual(a.supportedReasoningEfforts, b.supportedReasoningEfforts)) { return false; }
+    if (a.defaultReasoningEffort !== b.defaultReasoningEffort) { return false; }
+    if (JSON.stringify(a.extra) !== JSON.stringify(b.extra)) { return false; }
+    return true;
+}
+
+function arraysEqual(a: string[] | undefined, b: string[] | undefined): boolean {
+    if (a === b) { return true; }
+    if (!a || !b) { return false; }
+    if (a.length !== b.length) { return false; }
+    return a.every((v, i) => v === b[i]);
+}
+
+/**
+ * Sync hardcoded models into the user's custom configuration.
+ *
+ * On extension startup, this compares every model marked `_hardcoded: true`
+ * in the user's settings against the current hardcoded default. If the
+ * hardcoded version has changed, the user's config is updated to match.
+ *
+ * Also ensures that any hardcoded model NOT present in the user's config
+ * (but present in the hardcoded defaults for a provider the user has
+ * configured) is added with `_hardcoded: true`.
+ *
+ * Returns true if any changes were written to the user's settings.
+ */
+export async function syncHardcodedModels(): Promise<boolean> {
+    const config = vscode.workspace.getConfiguration();
+    const userProviders = config.get<ProviderConfig[]>("multiLLM.providers", []);
+    const hardcodedMap = buildHardcodedModelMap();
+
+    if (hardcodedMap.size === 0) {
+        return false;
+    }
+
+    let changed = false;
+    const updatedProviders: ProviderConfig[] = userProviders.map((provider) => {
+        const hardcodedModels = hardcodedMap.get(provider.id);
+        if (!hardcodedModels || hardcodedModels.size === 0) {
+            return provider;
+        }
+
+        const currentModels = provider.models ?? [];
+        const updatedModels: ProviderModelDef[] = [];
+        const seenIds = new Set<string>();
+        let providerChanged = false;
+
+        for (const model of currentModels) {
+            const hardcoded = hardcodedModels.get(model.id);
+
+            if (model._hardcoded && hardcoded) {
+                // This model was copied from hardcoded — check if it needs updating
+                if (!modelDefsEqual(model, hardcoded)) {
+                    // Hardcoded definition changed — update to match
+                    updatedModels.push({ ...hardcoded, _hardcoded: true });
+                    providerChanged = true;
+                    logger.info("providers.hardcoded-sync.updated", {
+                        providerId: provider.id,
+                        modelId: model.id,
+                    });
+                } else {
+                    updatedModels.push(model);
+                }
+            } else if (!model._hardcoded) {
+                // User-defined model — leave untouched
+                updatedModels.push(model);
+            } else {
+                // _hardcoded but no longer in hardcoded defaults — keep as-is
+                updatedModels.push(model);
+            }
+            seenIds.add(model.id);
+        }
+
+        // Add hardcoded models that the user doesn't have yet
+        for (const [modelId, hardcodedDef] of hardcodedModels) {
+            if (!seenIds.has(modelId)) {
+                updatedModels.push({ ...hardcodedDef, _hardcoded: true });
+                providerChanged = true;
+                logger.info("providers.hardcoded-sync.added", {
+                    providerId: provider.id,
+                    modelId,
+                });
+            }
+        }
+
+        if (providerChanged) {
+            changed = true;
+            return { ...provider, models: updatedModels };
+        }
+        return provider;
+    });
+
+    if (changed) {
+        await config.update(
+            "multiLLM.providers",
+            updatedProviders,
+            vscode.ConfigurationTarget.Global,
+        );
+        logger.info("providers.hardcoded-sync.applied", {
+            providerCount: updatedProviders.length,
+        });
+    }
+
+    return changed;
+}
+
+/**
+ * Copy the hardcoded default providers into the user's settings,
+ * marking all models with `_hardcoded: true`.
+ *
+ * If the user already has custom providers configured, only the
+ * hardcoded providers that don't conflict with existing ones are added.
+ * Existing user-defined models (without _hardcoded) are preserved.
+ */
+export async function copyHardcodedProvidersToUserSettings(): Promise<void> {
+    const config = vscode.workspace.getConfiguration();
+    const userProviders = config.get<ProviderConfig[]>("multiLLM.providers", []);
+    const hardcodedDefaults = getHardcodedDefaultProviders();
+
+    if (hardcodedDefaults.length === 0) {
+        vscode.window.showInformationMessage(l10n("No hardcoded default providers found."));
+        return;
+    }
+
+    const existingProviderIds = new Set(userProviders.map((p) => p.id));
+    const merged: ProviderConfig[] = [...userProviders];
+
+    for (const hcProvider of hardcodedDefaults) {
+        if (existingProviderIds.has(hcProvider.id)) {
+            // Provider already exists in user config — merge models
+            const existingIdx = merged.findIndex((p) => p.id === hcProvider.id);
+            const existing = merged[existingIdx];
+            const existingModels = existing.models ?? [];
+            const existingModelIds = new Set(existingModels.map((m) => m.id));
+
+            const mergedModels = [...existingModels];
+            if (hcProvider.models) {
+                for (const hcModel of hcProvider.models) {
+                    if (!existingModelIds.has(hcModel.id)) {
+                        mergedModels.push({ ...hcModel, _hardcoded: true });
+                    }
+                }
+            }
+
+            merged[existingIdx] = { ...existing, models: mergedModels };
+        } else {
+            // New provider — add with all models marked as hardcoded
+            const models = hcProvider.models?.map((m) => ({ ...m, _hardcoded: true }));
+            merged.push({ ...hcProvider, models });
+        }
+    }
+
+    await config.update(
+        "multiLLM.providers",
+        merged,
+        vscode.ConfigurationTarget.Global,
+    );
+
+    const totalModels = merged.reduce((sum, p) => sum + (p.models?.length ?? 0), 0);
+    vscode.window.showInformationMessage(
+        l10nFormat(
+            "Hardcoded providers copied to settings. {0} providers, {1} models total.",
+            String(merged.length),
+            String(totalModels),
+        ),
+    );
 }

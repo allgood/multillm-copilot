@@ -242,10 +242,10 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 		options?: ProvideLanguageModelChatResponseOptions
 	): AnthropicRequestBody {
 		// Set max_tokens (required for Anthropic)
-		if (um?.max_completion_tokens !== undefined) {
-			rb.max_tokens = um.max_completion_tokens;
-		} else if (um?.max_tokens !== undefined) {
+		if (um?.max_tokens !== undefined) {
 			rb.max_tokens = um.max_tokens;
+		} else if (um?.max_completion_tokens !== undefined) {
+			rb.max_tokens = um.max_completion_tokens;
 		}
 
 		// Add system content if we extracted it

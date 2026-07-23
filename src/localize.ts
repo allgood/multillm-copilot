@@ -170,6 +170,19 @@ const zhCN: Record<string, string> = {
     "Context length (max input tokens)": "上下文长度（最大输入 token 数）",
     "Must be a positive number.": "必须为正整数。",
     "Max output tokens": "最大输出 token 数",
+
+    // providers.ts — hardcoded model sync
+    "No hardcoded default providers found.": "未找到硬编码的默认提供商。",
+    "Hardcoded providers copied to settings. {0} providers, {1} models total.": "硬编码提供商已复制到设置。共 {0} 个提供商，{1} 个模型。",
+
+    // extension.ts — config inspector
+    "Configuration Inspector": "配置查看器",
+    "Effective Config": "当前生效配置",
+    "Hardcoded Default": "硬编码默认值",
+    "Raw Sources": "原始来源",
+    "From package.json": "来自 package.json",
+    "From user settings": "来自用户设置",
+    "From workspace settings": "来自工作区设置",
 };
 
 export function l10n(key: string): string {

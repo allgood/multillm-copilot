@@ -233,7 +233,10 @@ async function performCommitMsgGeneration(secrets: vscode.SecretStorage, gitDiff
         // Commit messages are simple tasks — disable thinking
         selectedModel.enable_thinking = false;
         selectedModel.reasoning_effort = "high";
-        // Cap max_completion_tokens
+        // Cap max output tokens for commit messages (they're short)
+        if (selectedModel.max_tokens && selectedModel.max_tokens > 8192) {
+            selectedModel.max_tokens = 8192;
+        }
         if (selectedModel.max_completion_tokens && selectedModel.max_completion_tokens > 8192) {
             selectedModel.max_completion_tokens = 8192;
         }

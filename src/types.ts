@@ -52,6 +52,12 @@ export interface ProviderModelDef {
     includeReasoningInRequest?: boolean;
     /** Extra body parameters */
     extra?: Record<string, unknown>;
+    /**
+     * Internal marker: when true, this model was copied from the hardcoded
+     * package.json default and should be auto-updated when the hardcoded
+     * definition changes. Stripped before being sent to the API.
+     */
+    _hardcoded?: boolean;
 }
 
 /**

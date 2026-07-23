@@ -254,10 +254,12 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
         }
 
         // max_tokens / max_completion_tokens (mutually exclusive)
-        if (um?.max_completion_tokens !== undefined) {
-            rb.max_completion_tokens = um.max_completion_tokens;
-        } else if (um?.max_tokens !== undefined) {
+        // Prefer max_tokens for broader API compatibility (some providers
+        // like OpenCode Go don't recognize max_completion_tokens).
+        if (um?.max_tokens !== undefined) {
             rb.max_tokens = um.max_tokens;
+        } else if (um?.max_completion_tokens !== undefined) {
+            rb.max_completion_tokens = um.max_completion_tokens;
         }
 
         // OpenAI reasoning configuration (only set when thinking is enabled)
@@ -267,13 +269,14 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
         }
 
         // Thinking mode (OpenAI-compatible format: {"thinking": {"type": "enabled"}})
-        // Only send thinking param when model explicitly enables it.
-        // Models that don't support thinking get no thinking field at all.
-        // Models with thinkingMode "always" (e.g., Kimi) have native thinking always on
-        // and may reject an explicit thinking parameter — skip it for them.
-        // Models with thinkingMode "reasoning_effort" use only the reasoning_effort
-        // parameter (standard OpenAI format) and reject the thinking field — skip it.
-        if (um?.enable_thinking === true && um?.thinkingMode !== "always" && um?.thinkingMode !== "reasoning_effort") {
+        // Always send the thinking parameter — the OpenCode Go /go/ gateway
+        // requires it and rejects requests that omit it.
+        // - thinkingMode "always" (e.g. Kimi): send { type: "enabled" }
+        // - thinkingMode "reasoning_effort": skip (uses reasoning_effort instead)
+        // - thinkingMode "switchable"/"adaptive": send based on enable_thinking
+        if (um?.thinkingMode === "reasoning_effort") {
+            // reasoning_effort models use reasoning_effort parameter only
+        } else if (um?.enable_thinking === true) {
             if (um?.reasoning_effort === 'adaptive') {
                 rb.thinking = { type: "adaptive" };
             } else {
@@ -282,6 +285,8 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                     (rb.thinking as Record<string, unknown>).budget_tokens = um.thinking_budget;
                 }
             }
+        } else {
+            rb.thinking = { type: "disabled" };
         }
 
         // OpenRouter reasoning configuration

@@ -365,6 +365,9 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
 
                 requestBody = openaiApi.prepareRequestBody(requestBody, um, options);
 
+                // Log the full request body for debugging
+                console.error("[MultiLLM] OpenAI request body:", JSON.stringify(requestBody, null, 2));
+
                 const url = `${BASE_URL.replace(/\/+$/, "")}/chat/completions`;
 
                 const response = await executeWithRetry(async () => {
@@ -638,10 +641,10 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                         messages: currentMessages,
                         stream: true,
                     };
-                    if (params.um?.max_completion_tokens !== undefined) {
-                        body.max_tokens = params.um.max_completion_tokens;
-                    } else if (params.um?.max_tokens !== undefined) {
+                    if (params.um?.max_tokens !== undefined) {
                         body.max_tokens = params.um.max_tokens;
+                    } else if (params.um?.max_completion_tokens !== undefined) {
+                        body.max_tokens = params.um.max_completion_tokens;
                     }
                     if (params.um?.temperature !== undefined && params.um.temperature !== null) {
                         body.temperature = params.um.temperature;
@@ -740,7 +743,9 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     if (params.um?.top_p !== undefined && params.um.top_p !== null) {
                         body.top_p = params.um.top_p;
                     }
-                    if (params.um?.max_completion_tokens !== undefined) {
+                    if (params.um?.max_tokens !== undefined) {
+                        body.max_tokens = params.um.max_tokens;
+                    } else if (params.um?.max_completion_tokens !== undefined) {
                         body.max_completion_tokens = params.um.max_completion_tokens;
                     }
                     if (params.um?.enable_thinking !== false && params.um?.reasoning_effort !== undefined) {

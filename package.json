@@ -83,6 +83,30 @@
 				"category": "%commandCategory%",
 				"title": "%command.rescanModels%",
 				"icon": "$(refresh)"
+			},
+			{
+				"command": "multiLLM.inspectModel",
+				"category": "%commandCategory%",
+				"title": "%command.inspectModel%",
+				"icon": "$(info)"
+			},
+			{
+				"command": "multiLLM.copyHardcodedModels",
+				"category": "%commandCategory%",
+				"title": "%command.copyHardcodedModels%",
+				"icon": "$(files)"
+			},
+			{
+				"command": "multiLLM.inspectConfig",
+				"category": "%commandCategory%",
+				"title": "%command.inspectConfig%",
+				"icon": "$(json)"
+			},
+			{
+				"command": "multiLLM.openSettingsJson",
+				"category": "%commandCategory%",
+				"title": "%command.openSettingsJson%",
+				"icon": "$(go-to-file)"
 			}
 		],
 		"menus": {
