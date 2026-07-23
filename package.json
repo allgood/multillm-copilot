@@ -25,7 +25,7 @@
 	"bugs": {
 		"url": "https://github.com/OnesoftQwQ/opencode-go-copilot/issues"
 	},
-	"version": "1.0.0-alpha3",
+	"version": "1.0.0-alpha4",
 	"engines": {
 		"vscode": "^1.116.0"
 	},
