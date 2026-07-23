@@ -490,7 +490,7 @@
 		"compile": "tsc -p ./",
 		"lint": "eslint",
 		"watch": "tsc -watch -p ./",
-		"build": "npm run compile && npx @vscode/vsce package -o extension.vsix",
+		"build": "npm run compile && npx @vscode/vsce package -o multillm-copilot.vsix",
 		"postinstall": "node scripts/copy-tokenizer.js"
 	},
 	"dependencies": {

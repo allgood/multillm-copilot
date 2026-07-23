@@ -1267,7 +1267,7 @@ npm run watch
 
 # 打包 VSIX
 npm run build
-# 等效于: npx @vscode/vsce package -o extension.vsix
+# 等效于: npx @vscode/vsce package -o multillm-copilot.vsix
 ```
 
 ### 5.2 编译配置 (tsconfig.json)
@@ -1306,6 +1306,8 @@ npm run build
 > npx tsc --noEmit
 > ```
 > 任何编译错误（包括类型错误）必须在提交前修复。
+>
+> **构建输出文件名固定为 `multillm-copilot.vsix`**，不得更改。`package.json` 的 `build` 脚本已配置 `-o multillm-copilot.vsix`，任何情况下都不要修改该输出文件名。
 
 ### 6.2 **AGENTS.md 同步更新铁律**
 
