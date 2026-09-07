@@ -18,7 +18,7 @@ import type {
 	AnthropicStreamChunk,
 } from "./anthropicTypes";
 
-import { isImageMimeType, isToolResultPart, collectToolResultText, convertToolsToOpenAI, mapRole, storeDataUriImages, replaceDataUriImages, modelSupportsTemperature } from "../utils";
+import { isImageMimeType, isToolResultPart, collectToolResultText, convertToolsToOpenAI, mapRole, storeDataUriImages, replaceDataUriImages, modelSupportsTemperature, OPENCODE_GO_PROVIDER_ID, deriveSessionIdFromText } from "../utils";
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
@@ -543,7 +543,11 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 		};
 		requestBody = this.prepareRequestBody(requestBody, model, undefined);
 
-		const headers = CommonApi.prepareHeaders(apiKey, model.apiMode ?? "openai", model.headers);
+		// Only the OpenCode Go provider requires the `x-opencode-session` header.
+		const sessionId = model.owned_by === OPENCODE_GO_PROVIDER_ID
+			? deriveSessionIdFromText(model.id, messages.find((m) => m.role === "user")?.content ?? "")
+			: undefined;
+		const headers = CommonApi.prepareHeaders(apiKey, model.apiMode ?? "openai", model.headers, sessionId);
 
 		const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
 		const url = normalizedBaseUrl.endsWith("/v1")

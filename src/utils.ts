@@ -1,7 +1,27 @@
 import * as vscode from "vscode";
+import * as crypto from "crypto";
 import type { MultiLLMModelItem, RetryConfig } from "./types";
 import type { StoredImage } from "./vision/types";
 import { OpenAIFunctionToolDef } from "./openai/openaiTypes";
+
+/**
+ * Provider ID of the OpenCode Go provider. Only this provider requires the
+ * `x-opencode-session` header on inference requests.
+ */
+export const OPENCODE_GO_PROVIDER_ID = "opencode-go";
+
+/**
+ * Derive a stable session ID from a model ID plus text content, formatted as a
+ * canonical UUID (8-4-4-4-12). Used for the `x-opencode-session` header that the
+ * OpenCode Go API requires on every inference request.
+ */
+export function deriveSessionIdFromText(modelId: string, text: string): string {
+    const hash = crypto.createHash("sha256");
+    hash.update(modelId);
+    hash.update(text);
+    const hex = hash.digest("hex").slice(0, 32);
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
 
 const RETRY_MAX_ATTEMPTS = 3;
 const RETRY_INTERVAL_MS = 1000;

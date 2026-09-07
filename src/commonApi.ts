@@ -427,12 +427,18 @@ export abstract class CommonApi<TMessage, TRequestBody> {
      * @param apiKey The API key to use.
      * @param apiMode The apiMode (affects header format).
      * @param customHeaders Optional custom headers from model config.
+     * @param sessionId Optional stable per-conversation session ID. Only the
+     * OpenCode Go provider requires the `x-opencode-session` header (used for
+     * routing and prompt-cache optimization; requests without it error since
+     * 2026-09-05). When omitted, the header is not injected so other providers
+     * are unaffected.
      * @returns Headers object.
      */
     public static prepareHeaders(
         apiKey: string,
         apiMode: string,
-        customHeaders?: Record<string, string>
+        customHeaders?: Record<string, string>,
+        sessionId?: string
     ): Record<string, string> {
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
@@ -448,6 +454,13 @@ export abstract class CommonApi<TMessage, TRequestBody> {
         } else {
             // OpenAI-compatible API uses Bearer auth
             headers["Authorization"] = `Bearer ${apiKey}`;
+        }
+
+        // OpenCode Go requires a stable per-conversation session ID on every
+        // inference request. Only inject when a session ID is supplied so other
+        // providers are unaffected.
+        if (sessionId?.trim()) {
+            headers["x-opencode-session"] = sessionId.trim();
         }
 
         // Merge custom headers if provided

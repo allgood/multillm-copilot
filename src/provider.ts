@@ -11,10 +11,11 @@ import {
 } from "vscode";
 
 import * as path from "path";
+import * as crypto from "crypto";
 
 import type { ModelPreset, MultiLLMModelItem } from "./types";
 
-import { createRetryConfig, executeWithRetry, convertToolsToOpenAI } from "./utils";
+import { createRetryConfig, executeWithRetry, convertToolsToOpenAI, OPENCODE_GO_PROVIDER_ID, deriveSessionIdFromText } from "./utils";
 
 import { prepareLanguageModelChatInformation } from "./provideModel";
 import { getModelConfig, parseCompositeModelId, getProviderApiKey, storeProviderApiKey } from "./providers";
@@ -70,6 +71,46 @@ function getRequestedReasoningEffort(options: ProvideLanguageModelChatResponseOp
 
     const modelOptionsEffort = modelOptions?.reasoning_effort ?? modelOptions?.reasoningEffort;
     return typeof modelOptionsEffort === "string" ? modelOptionsEffort : undefined;
+}
+
+/**
+ * Derive a stable per-conversation session ID for the `x-opencode-session` header.
+ *
+ * OpenCode Go requires a stable per-conversation ID on every inference request
+ * (used server-side for routing and prompt-cache optimization; requests without
+ * it error since 2026-09-05). VS Code does not expose a conversation identifier
+ * to language model providers, so the ID is derived deterministically from the
+ * target model ID plus the conversation's first user message text: chat clients
+ * re-send the same history on every turn of a conversation, so the derived ID
+ * stays stable across turns while differing between conversations.
+ *
+ * @param modelId The model ID the request targets (keeps sessions distinct per model).
+ * @param messages The request messages from VS Code.
+ * @returns A UUID-formatted session ID, or a random UUID when the conversation has no user text anchor (e.g. image-only requests).
+ */
+function deriveOpencodeSessionId(
+    modelId: string,
+    messages: readonly LanguageModelChatRequestMessage[]
+): string {
+    for (const message of messages) {
+        if (message.role !== vscode.LanguageModelChatMessageRole.User) {
+            continue;
+        }
+        // Collect text parts only — binary data parts (images) are skipped so the
+        // hash stays cheap and the ID does not depend on image bytes.
+        const anchorText = message.content
+            .map((part) => {
+                if (typeof part === "string") return part;
+                if (part instanceof vscode.LanguageModelTextPart) return part.value;
+                return "";
+            })
+            .join("");
+        if (!anchorText.trim()) {
+            continue;
+        }
+        return deriveSessionIdFromText(modelId, anchorText);
+    }
+    return crypto.randomUUID();
 }
 
 /**
@@ -270,8 +311,12 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
 
             dispatchFetch = this._createFetchWithTimeout(requestTimeoutMs);
 
-            // Prepare headers
-            const requestHeaders = CommonApi.prepareHeaders(modelApiKey, apiMode, um?.headers);
+            // Prepare headers. Only the OpenCode Go provider requires the
+            // `x-opencode-session` header on inference requests.
+            const sessionId = providerId === OPENCODE_GO_PROVIDER_ID
+                ? deriveOpencodeSessionId(model.id, messages)
+                : undefined;
+            const requestHeaders = CommonApi.prepareHeaders(modelApiKey, apiMode, um?.headers, sessionId);
             logger.debug("request.headers", {
                 headers: logger.sanitizeHeaders(requestHeaders as Record<string, string>),
             });

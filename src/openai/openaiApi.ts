@@ -28,6 +28,8 @@ import {
     storeDataUriImages,
     replaceDataUriImages,
     modelSupportsTemperature,
+    OPENCODE_GO_PROVIDER_ID,
+    deriveSessionIdFromText,
 } from "../utils";
 
 import { CommonApi, StreamUsage } from "../commonApi";
@@ -613,7 +615,11 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
         };
         requestBody = this.prepareRequestBody(requestBody, model, undefined);
 
-        const headers = CommonApi.prepareHeaders(apiKey, model.apiMode ?? "openai", model.headers);
+        // Only the OpenCode Go provider requires the `x-opencode-session` header.
+        const sessionId = model.owned_by === OPENCODE_GO_PROVIDER_ID
+            ? deriveSessionIdFromText(model.id, messages.find((m) => m.role === "user")?.content ?? "")
+            : undefined;
+        const headers = CommonApi.prepareHeaders(apiKey, model.apiMode ?? "openai", model.headers, sessionId);
 
         const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
 

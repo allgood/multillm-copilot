@@ -31,6 +31,7 @@
 | **Automatic Model Discovery** | Controlled by the `opencodego.enableAutoModelDiscovery` setting (enabled by default). At startup, fetches the current list of available model IDs from `/zen/go/v1/models`, filters the built-in model list (unavailable models are automatically hidden). New models obtain metadata (context length, vision capability, tool calling, reasoning ability, etc.) from the `models.dev` database and are automatically added; `thinkingMode` is inferred from the `reasoning` field (supports reasoning → `switchable`, does not support → `always`). Silently falls back to the full built-in list when the API is unavailable. In-memory cache (5-minute TTL) |
 | **OpenCode Zen Free Models** | Enabled via a settings toggle, fetches the model list from the Zen API and filters down to 6 free models (Big Pickle, DeepSeek V4 Flash, MiniMax M3, MiniMax M2.5, Ring 2.6 1T, Nemotron 3 Super), appending them to the model picker with the `OpenCode Zen` label. Supports in-memory caching (5-minute TTL), with silent degradation when the API is unavailable |
 | **Dual API Mode** | Simultaneously supports the **OpenAI-compatible format** (`/chat/completions`) and the **Anthropic format** (`/v1/messages`) |
+| **Session Header (OpenCode Go)** | Sends the `x-opencode-session` header on inference requests **only when the provider is `opencode-go`** (OpenCode Go requires it since 2026-09-05 for routing and prompt-cache optimization). The session ID is derived deterministically via SHA-256 from the model ID + first user text message (stable across conversation turns), falling back to a random UUID for image-only requests. Other providers are unaffected |
 | **Streaming Inference** | Supports SSE (Server-Sent Events) streaming responses, outputting text and tool calls in real time |
 | **Thinking / Reasoning** | Supports displaying the model's reasoning process ("thinking" state), including XML think block parsing |
 | **Tool Calling** | Supports VS Code's `LanguageModelToolCallPart` mechanism |
@@ -190,6 +191,14 @@ provideLanguageModelChatResponse(model, messages, options, progress, token)
   │      └── Connect VS Code cancellation token → abort()
   │
   ├── 9. Create undici fetch (custom bodyTimeout)
+  │
+  ├── 9a. Build request headers → CommonApi.prepareHeaders()
+  │       └── Only when provider is `opencode-go`: inject `x-opencode-session`
+  │           (OpenCode Go requires it since 2026-09-05 for routing and prompt
+  │           cache optimization). Session ID derived by deriveOpencodeSessionId()
+  │           via SHA-256 of model ID + first user text message (stable across
+  │           turns), falling back to a random UUID for image-only requests.
+  │           Vision proxy follow-up rounds reuse the same request headers.
   │
   ├── 9b. After obtaining Response body reader, register cancellation callback
   │      └── token.onCancellationRequested / signal.addEventListener("abort")
@@ -492,6 +501,9 @@ Handles image proxy interception. Loops for up to `visionMaxRounds` rounds. Each
 #### `private async ensureApiKey(): Promise<string | undefined>`
 Ensures API Key exists in SecretStorage; prompts user with input box if missing.
 
+#### `deriveOpencodeSessionId(modelId, messages): string` (module-level function)
+Derives a stable per-conversation session ID for the `x-opencode-session` header. OpenCode Go requires a stable per-conversation ID on every inference request (used server-side for routing and prompt-cache optimization; requests without it error since 2026-09-05). Since VS Code does not expose a conversation identifier to language model providers, the ID is derived deterministically from the target model ID + the conversation's first user message text via SHA-256 (formatted as a canonical UUID). Chat clients re-send the same history on every turn, so the derived ID stays stable across turns while differing between conversations. Skips binary data parts (images); falls back to a random UUID when the conversation has no user text anchor (e.g. image-only requests).
+
 ---
 
 ### 4.4 `src/models.ts`
@@ -533,7 +545,7 @@ Key methods:
 - `_resetStreamState()` — Resets mutable stream state between rounds
 - `bufferThinkingContent()` / `flushThinkingBuffer()` — Thinking content management
 - `processXmlThinkBlocks()` — XML think block parsing
-- `prepareHeaders()` — HTTP header preparation
+- `prepareHeaders()` — HTTP header preparation. Accepts an optional `sessionId`; when provided, injects the `x-opencode-session` header (OpenCode Go only). Other providers are unaffected when omitted.
 
 ---
 
@@ -575,7 +587,7 @@ Token counting functions using o200k_base tiktoken tokenizer. Supports text, ima
 
 ### 4.11 `src/utils.ts`
 
-Utility functions: `getModelProviderId()`, `modelSupportsTemperature()`, `normalizeUserModels()`, `parseModelId()`, `mapRole()`, `convertToolsToOpenAI()`, `createRetryConfig()`, `executeWithRetry()`, `isRetryableError()`, image/data URL helpers, `tryParseJSONObject()`.
+Utility functions: `getModelProviderId()`, `modelSupportsTemperature()`, `normalizeUserModels()`, `parseModelId()`, `mapRole()`, `convertToolsToOpenAI()`, `createRetryConfig()`, `executeWithRetry()`, `isRetryableError()`, image/data URL helpers, `tryParseJSONObject()`. Also exports `OPENCODE_GO_PROVIDER_ID` (constant for the OpenCode Go provider ID) and `deriveSessionIdFromText(modelId, text)` (SHA-256 based session ID derivation for the `x-opencode-session` header).
 
 ---
 
@@ -606,14 +618,14 @@ Status bar management: creation, token usage display, progress bar (Unicode bloc
 ### 4.16 `src/openai/openaiApi.ts`
 
 #### `class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unknown>>`
-OpenAI-compatible API implementation. Handles message conversion, request body building (temperature, top_p, max_tokens, reasoning_effort, thinking mode, tools, tool_choice, penalty params), SSE streaming response processing (delta handling for reasoning, XML think blocks, text, tool calls), and `reasoning_details` array support (OpenRouter format). Also provides non-streaming `createMessage()` generator for Git commit generation.
+OpenAI-compatible API implementation. Handles message conversion, request body building (temperature, top_p, max_tokens, reasoning_effort, thinking mode, tools, tool_choice, penalty params), SSE streaming response processing (delta handling for reasoning, XML think blocks, text, tool calls), and `reasoning_details` array support (OpenRouter format). Also provides non-streaming `createMessage()` generator for Git commit generation (injects `x-opencode-session` when the model's provider is `opencode-go`).
 
 ---
 
 ### 4.17 `src/anthropic/anthropicApi.ts`
 
 #### `class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBody>`
-Anthropic-format API implementation. Handles message conversion (system message extraction to `_systemContent`, content block array format), request body building (max_tokens, system, temperature, top_p, top_k, thinking mode, Anthropic-format tools, tool_choice), SSE streaming response processing (8 event types: ping, error, message_start, message_delta, content_block_start, content_block_delta, content_block_stop, message_stop). Also provides non-streaming `createMessage()` generator.
+Anthropic-format API implementation. Handles message conversion (system message extraction to `_systemContent`, content block array format), request body building (max_tokens, system, temperature, top_p, top_k, thinking mode, Anthropic-format tools, tool_choice), SSE streaming response processing (8 event types: ping, error, message_start, message_delta, content_block_start, content_block_delta, content_block_stop, message_stop). Also provides non-streaming `createMessage()` generator (injects `x-opencode-session` when the model's provider is `opencode-go`).
 
 ---
 
