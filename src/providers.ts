@@ -4,6 +4,15 @@ import type { ProviderConfig, ProviderModelDef, MultiLLMModelItem } from "./type
 import { l10n } from "./localize";
 import { logger } from "./logger";
 import { modelSupportsTemperature } from "./utils";
+import { getApiModelIds } from "./apiModelList";
+import { ensureModelsDevLoaded, getCatalogProviderModelIds } from "./modelsDev";
+import {
+    buildCatalogModelInfo,
+    getCatalogModelConfig,
+    isModelDeprecated,
+    resolveProviderForModelId,
+    type ProviderId,
+} from "./catalogModels";
 
 /**
  * Five-minute cache for dynamic model list fetches.
@@ -328,6 +337,92 @@ function buildDynamicModelInfo(
 }
 
 /**
+ * Whether a provider ID is served by the built-in models.dev catalog layer.
+ * Catalog-backed providers get their model list from the catalog (so newly
+ * released models appear without a config change), while user-configured
+ * providers rely on their static list and/or dynamic endpoint.
+ */
+function isCatalogProvider(providerId: string): providerId is ProviderId {
+    return providerId === "opencode-go" || providerId === "opencode";
+}
+
+/**
+ * Build the catalog-backed model list for a provider.
+ *
+ * The catalog is the source of truth for OpenCode Go / OpenCode Zen models, so
+ * models released upstream show up without editing `multiLLM.providers`. When
+ * the API model list is reachable it filters the catalog down to what the
+ * server actually serves; when it is not, the full catalog list is returned.
+ * Deprecated models are hidden unless `multiLLM.showDeprecatedModels` is set.
+ *
+ * @param providerId The catalog provider ID (`opencode-go` or `opencode`).
+ * @param apiKey API key used to fetch the server-side model list (optional).
+ * @returns Model picker entries, or an empty array when the catalog is unavailable.
+ */
+async function buildCatalogModelInfos(
+    providerId: ProviderId,
+    apiKey: string | undefined,
+    group: string,
+): Promise<LanguageModelChatInformation[]> {
+    try {
+        await ensureModelsDevLoaded();
+    } catch (error) {
+        logger.warn("providers.catalog-load-failed", {
+            providerId,
+            error: error instanceof Error ? error.message : String(error),
+        });
+        return [];
+    }
+
+    let ids = getCatalogProviderModelIds(providerId);
+    if (ids.length === 0) {
+        logger.warn("providers.catalog-empty", { providerId });
+        return [];
+    }
+
+    // Keep the list consistent with request routing: a "-free" suffixed ID is
+    // routed to Zen at request time, so it must not appear under Go (and vice
+    // versa), otherwise selecting it would hit the wrong endpoint.
+    ids = ids.filter((id) => resolveProviderForModelId(id) === providerId);
+
+    // Filter against the server-side list when it is available.
+    const apiModelIds = await getApiModelIds(apiKey);
+    if (apiModelIds.size > 0) {
+        ids = ids.filter((id) => apiModelIds.has(id));
+    }
+
+    const showDeprecated = vscode.workspace
+        .getConfiguration()
+        .get<boolean>("multiLLM.showDeprecatedModels", false);
+    if (!showDeprecated) {
+        ids = ids.filter((id) => !isModelDeprecated(providerId, id));
+    }
+
+    logger.info("providers.catalog-models", {
+        providerId,
+        catalogCount: getCatalogProviderModelIds(providerId).length,
+        availableCount: ids.length,
+        apiFiltered: apiModelIds.size > 0,
+    });
+
+    // The catalog builder emits the bare model ID and a bare display name, but
+    // this fork addresses models by composite ID (`providerId:modelId`) and
+    // labels them `Group » Name` everywhere else — the picker, `getModelConfig()`
+    // and the request path all rely on that. Rewrite both so catalog models are
+    // indistinguishable from static and dynamic ones.
+    return ids.map((id) => {
+        const info = buildCatalogModelInfo(providerId, id);
+        return {
+            ...info,
+            id: `${providerId}:${id}`,
+            name: `${group} » ${info.name}`,
+            detail: group,
+            tooltip: group,
+        } as LanguageModelChatInformation;
+    });
+}
+
+/**
  * Get all model infos across all providers (merged list for model picker).
  */
 export async function getAllModelInfos(
@@ -339,7 +434,6 @@ export async function getAllModelInfos(
 
     for (const provider of providers) {
         const group = provider.group || provider.label;
-        const providerBaseUrl = provider.baseUrl;
         const staticModelIds = new Set<string>();
 
         // Static models
@@ -352,6 +446,22 @@ export async function getAllModelInfos(
                     infos.push(info);
                 }
                 staticModelIds.add(def.id);
+            }
+        }
+
+        // Catalog models (OpenCode Go / OpenCode Zen). Static definitions win
+        // on ID conflict so user overrides in settings are never shadowed.
+        if (isCatalogProvider(provider.id)) {
+            const apiKey = await getProviderApiKey(provider.id, secrets);
+            const catalogInfos = await buildCatalogModelInfos(provider.id, apiKey, group);
+            for (const info of catalogInfos) {
+                const infoId = (info as { id: string }).id;
+                const bareId = parseCompositeModelId(infoId).modelId;
+                if (staticModelIds.has(bareId) || seenIds.has(infoId)) {
+                    continue;
+                }
+                seenIds.add(infoId);
+                infos.push(info);
             }
         }
 
@@ -461,6 +571,11 @@ export function getModelConfig(compositeId: string): MultiLLMModelItem | undefin
     // those definitions are never overridden by dynamically fetched metadata.
     const hasStaticModels = provider.models && provider.models.length > 0;
     if (provider.autoDiscovery === false || (hasStaticModels && provider.autoDiscovery !== true)) {
+        // Catalog-backed providers resolve their models from the catalog layer
+        // (the picker lists catalog models that are not in the static config).
+        if (isCatalogProvider(providerId)) {
+            return getCatalogModelConfig(modelId);
+        }
         return undefined;
     }
 

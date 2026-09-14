@@ -467,8 +467,7 @@ src/
 | `goUsage.ts` | ~260 | OpenCode Go plan usage fetching from `GET /zen/go/v1/usage` (5h/weekly/monthly windows + `useBalance`), 5-minute TTL cache, tolerant field-name parsing, reset countdown/summary formatting |
 | `modelsDev.ts` | ~560 | models.dev catalog fetching and querying: three-tier fallback chain (official → mirror → hardcoded), indexes global models and providers, short-ID matching, provider queries, `reasoning_options`/thinking mode/vision/budget inference, 1-minute cache |
 | `commonApi.ts` | ~470 | `CommonApi<TMessage,TRequestBody>` abstract base class (image storage, tool call interception, User-Agent config) |
-| `provideModel.ts` | ~35 | Model info provider functions: delegates to `providers.ts` `getAllModelInfos()`; `resetAutoDiscoveryState()` clears all model caches |
-| `provideToken.ts` | ~105 | Token usage calculation |
+| `provideModel.ts` | ~35 | Model info provider functions: delegates to `providers.ts` `getAllModelInfos()`; `resetAutoDiscoveryState()` clears all model caches || `provideToken.ts` | ~105 | Token usage calculation |
 | `utils.ts` | ~570 | Utility functions (retry, role mapping, base URL override/validation, OpenAI Chat/Responses tool conversion, resource-link resolution, etc.) |
 | `statusBar.ts` | ~317 | Status bar creation, updates, cumulative counters, Go usage polling and tooltip section rendering |
 | `logger.ts` | ~55 | Log output (LogOutputChannel) |
@@ -529,10 +528,18 @@ Clears the dynamic model cache. If `providerId` is provided, only clears that pr
 Forcibly rescans dynamic models for specified provider or all enabled providers. Clears old cache, fetches latest model list, updates cache on success, records error info on failure. Returns scan results for each provider.
 
 #### `getAllModelInfos(secrets: vscode.SecretStorage): Promise<LanguageModelChatInformation[]>`
-Aggregates model infos from all enabled providers. Iterates through providers, adds hardcoded models, conditionally merges dynamic models (dynamic models don't overwrite hardcoded models with same ID).
+Aggregates model infos from all enabled providers. Per provider, in order: static models (`provider.models`), then catalog models for catalog-backed providers (`opencode-go` / `opencode`), then dynamic models from `modelsBaseUrl` when auto-discovery is enabled. Static definitions win on ID conflict, so user overrides in settings are never shadowed.
+
+#### `buildCatalogModelInfos(providerId, apiKey, group): Promise<LanguageModelChatInformation[]>`
+Builds the catalog-backed model list for `opencode-go` / `opencode`. Filters the catalog IDs by request routing (`resolveProviderForModelId`), then by the server-side `/models` list when reachable, then drops deprecated models unless `multiLLM.showDeprecatedModels` is set. Returns an empty array when the catalog is unavailable.
+
+> The catalog builder emits the bare model ID and a bare display name, so this function rewrites both to the fork's conventions: `id` becomes the composite `providerId:modelId` and `name` becomes `Group » Name` (matching the static and dynamic builders). Without those rewrites catalog models are listed but cannot be resolved, and they render inconsistently in the picker.
+
+#### `isCatalogProvider(providerId): providerId is ProviderId`
+Whether a provider ID is served by the built-in models.dev catalog layer.
 
 #### `getModelConfig(compositeId: string): MultiLLMModelItem | undefined`
-Looks up runtime model config by composite ID `providerId/modelId`. Searches hardcoded models first, then dynamic cache (only when autoDiscovery is enabled), ensuring hardcoded models are not overridden.
+Looks up runtime model config by composite ID `providerId:modelId`. Searches static definitions first, then the dynamic cache (only when autoDiscovery is enabled), then falls back to `getCatalogModelConfig()` for catalog-backed providers so catalog-only models resolve correctly.
 
 #### `defToModelItem(def: ProviderModelDef, provider: ProviderConfig): MultiLLMModelItem`
 Converts hardcoded `ProviderModelDef` into runtime `MultiLLMModelItem`. Passes through all relevant fields. `enable_thinking` defaults to `true`; actual enablement is dynamically determined by `provider.ts` based on user's selected reasoning effort.
@@ -704,7 +711,7 @@ Looks up models.dev metadata by API model ID. Matching: exact full ID, short ID,
 ### 4.9 `src/provideModel.ts`
 
 #### `prepareLanguageModelChatInformation(options, _token, secrets): Promise<LanguageModelChatInformation[]>`
-Gets the model info list. Delegates to `providers.ts` `getAllModelInfos()`, which aggregates models from every enabled provider (static definitions plus optional dynamic discovery).
+Gets the model info list. Delegates to `providers.ts` `getAllModelInfos()`, which aggregates models from every enabled provider: static definitions, catalog models for `opencode-go` / `opencode`, and optional dynamic discovery.
 
 #### `resetAutoDiscoveryState(): void`
 Clears every cached model source (`clearModelCache()`, `clearApiModelCache()`, `clearModelsDevCache()`) so the next model list request re-fetches fresh data. Used by the `multiLLM.rescanModels` command.
@@ -799,7 +806,7 @@ Vision proxy type definitions: `StoredImage`, `InterceptedToolCall`, `ASK_IMAGE_
 
 ### 4.24 `src/providers.ts` (multi-provider layer)
 
-`getProviders()`, `getAllModelInfos()`, `getModelConfig()`, `parseCompositeModelId()`, `rescanProviderModels()`, `clearModelCache()`, `getProviderApiKey()` / `storeProviderApiKey()` / `deleteProviderApiKey()` (SecretStorage, keyed `multiLLM.provider.<id>.apiKey`), `defToModelItem()`.
+`getProviders()`, `getAllModelInfos()`, `buildCatalogModelInfos()`, `isCatalogProvider()`, `getModelConfig()`, `parseCompositeModelId()`, `rescanProviderModels()`, `clearModelCache()`, `getProviderApiKey()` / `storeProviderApiKey()` / `deleteProviderApiKey()` (SecretStorage, keyed `multiLLM.provider.<id>.apiKey`), `defToModelItem()`.
 
 ---
 
