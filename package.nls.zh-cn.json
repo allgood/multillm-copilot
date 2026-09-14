@@ -8,6 +8,9 @@
 	"command.setModelPreset": "设置模型预设",
 	"command.manageProviders": "管理提供商",
 	"command.rescanModels": "重新扫描模型",
+	"command.resetSessionRouting": "重置会话路由",
+	"command.setInferenceBaseUrl": "设置代理 Base URL",
+	"command.checkUsage": "查询 OpenCode Go 用量",
 	"config.title": "Multi-LLM Provider for Copilot",
 	"config.providers.desc": "LLM 提供商列表。每个提供商定义 Base URL、API 模式、模型列表等信息。模型将在 Copilot Chat 模型选择器中按 group 字段分组显示，enable 控制是否启用。",
 	"config.commitLanguage.desc": "生成提交消息的语言。'auto' 从最近的提交中自动检测语言。",
@@ -42,5 +45,15 @@
 	"config.modelPreset.top_p.desc": "Top-p 值 (0-1)。留空表示不覆盖。",
 	"config.visionProxyModel.desc": "当聊天模型不支持图片时，用于图片描述/代理的视觉模型。",
 	"config.visionProxyThinking.desc": "为视觉代理模型启用思考模式。",
-	"config.enableThirdPartyTokenIndicator.desc": "在状态栏显示高级 Token 用量指示器。关闭后仅使用 Copilot 原生指示器。"
+	"config.visionMaxRounds.desc": "每次请求中视觉代理追问的最大轮数。",
+	"config.enableThirdPartyTokenIndicator.desc": "在状态栏显示高级 Token 用量指示器。关闭后仅使用 Copilot 原生指示器。",
+	"config.showUsageInTooltip.desc": "在状态栏悬浮提示中显示 OpenCode Go 套餐用量。",
+	"config.usageRefreshInterval.desc": "OpenCode Go 套餐用量的刷新间隔（分钟，1-60）。",
+	"config.enableCommitGeneration.desc": "在源代码管理标题栏显示 Git 提交消息生成按钮。",
+	"config.showDeprecatedModels.desc": "显示目录中标记为已弃用的模型。默认隐藏。",
+	"config.modelsDevUpdateInterval.desc": "models.dev 目录刷新的最小间隔（毫秒）。",
+	"config.modelsDevMirrorUrl.desc": "models.dev 目录的镜像地址，在官方端点不可达时使用。可填完整目录 URL 或以 '/' 结尾的基础 URL。",
+	"config.modelsDevMirrorToken.desc": "发送给 models.dev 镜像的可选令牌（x-mirror-token 请求头）。",
+	"config.inferenceBaseUrl.desc": "覆盖推理请求（聊天与 Git 提交生成）的 Base URL。用于接入与官方端点完全兼容的本地代理。留空则使用提供商配置的地址。",
+	"config.readFileLines.desc": "自动扩展 read_file 请求的行数。0 表示不调整。"
 }

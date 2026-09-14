@@ -20,60 +20,76 @@
 
 ### 1.1 Summary
 
-**OpenCode Go Copilot Provider** is a VS Code extension that integrates the OpenCode Go platform's AI language models into GitHub Copilot Chat. Users can select and use various models provided by OpenCode Go (such as the DeepSeek, GLM, Qwen, MiMo, MiniMax, Kimi, and other series) within VS Code's Copilot Chat interface, enjoying features like intelligent code completion, chat conversations, and Git commit message generation.
+**Multi-LLM Copilot Provider** is a VS Code extension that integrates any OpenAI-compatible, Anthropic-compatible, or OpenAI Responses-compatible LLM service into GitHub Copilot Chat. Users can select and use models from any configured provider (such as OpenCode Go's DeepSeek, GLM, Qwen, MiMo, MiniMax, Kimi series, or self-hosted OpenAI/Anthropic endpoints) within VS Code's Copilot Chat interface, enjoying features like intelligent code completion, chat conversations, and Git commit message generation.
 
 ### 1.2 Core Capabilities
 
 | Capability | Description |
 |------|------|
-| **Chat Model Provider** | Implements the `LanguageModelChatProvider` interface, registering `opencodego` as a vendor in VS Code |
-| **Multi-Model Support** | 17 built-in model definitions across 6 major model families, with unified thinking mode switching via a reasoning intensity selector. Optional OpenCode Zen free models (8 models). Supports automatic model discovery: when enabled, fetches the model list from the API, automatically filters unavailable models, and discovers newly added models |
-| **Automatic Model Discovery** | Controlled by the `opencodego.enableAutoModelDiscovery` setting (enabled by default). At startup, fetches the current list of available model IDs from `/zen/go/v1/models`, filters the built-in model list (unavailable models are automatically hidden). New models obtain metadata (context length, vision capability, tool calling, reasoning ability, etc.) from the `models.dev` database and are automatically added; `thinkingMode` is inferred from the `reasoning` field (supports reasoning → `switchable`, does not support → `always`). Silently falls back to the full built-in list when the API is unavailable. In-memory cache (5-minute TTL) |
-| **OpenCode Zen Free Models** | Enabled via a settings toggle, fetches the model list from the Zen API and filters down to 6 free models (Big Pickle, DeepSeek V4 Flash, MiniMax M3, MiniMax M2.5, Ring 2.6 1T, Nemotron 3 Super), appending them to the model picker with the `OpenCode Zen` label. Supports in-memory caching (5-minute TTL), with silent degradation when the API is unavailable |
-| **Dual API Mode** | Simultaneously supports the **OpenAI-compatible format** (`/chat/completions`) and the **Anthropic format** (`/v1/messages`) |
-| **Session Header (OpenCode Go)** | Sends the `x-opencode-session` header on inference requests **only when the provider is `opencode-go`** (OpenCode Go requires it since 2026-09-05 for routing and prompt-cache optimization). The session ID is derived deterministically via SHA-256 from the model ID + first user text message (stable across conversation turns), falling back to a random UUID for image-only requests. Other providers are unaffected |
+| **Chat Model Provider** | Implements the `LanguageModelChatProvider` interface, registering `multiLLM` as a vendor in VS Code |
+| **Multi-Provider Support** | Providers are configured via the `multiLLM.providers` setting. Each provider defines a `baseUrl`, `apiMode` (`openai`/`anthropic`/`auto`), a static model list or a dynamic model endpoint (`modelsBaseUrl`), custom headers, and a request delay. Models are grouped in the picker by the provider's `group` field |
+| **Multi-Model Support** | Each provider may declare static models (with context length, output limit, vision, thinking mode, reasoning efforts, temperature support) or discover models dynamically from an OpenAI `/v1/models` endpoint. Thinking mode is switched via a unified reasoning intensity selector |
+| **Automatic Model Discovery** | Controlled by each provider's `autoDiscovery` field (defaults to enabled for providers without static models, disabled for providers that already define models so dynamic metadata never overrides hardcoded definitions). Dynamic model lists use a 5-minute in-memory cache and degrade silently to the last cache on API failure |
+| **OpenCode Go Catalog Integration** | Built-in `models.dev` catalog layer (`catalog.json`, 1-minute TTL cache) resolves OpenCode Go / OpenCode Zen model metadata (context length, vision, thinking mode, reasoning efforts, API endpoint). The catalog fetch uses a three-tier fallback chain: official `models.dev` (10s timeout) → mirror (`multiLLM.modelsDevMirrorUrl`, default `https://modelsdev-mirror.onesoft.top/catalog.json`, 30s timeout, `platform: opencode-go-copilot` header plus optional `x-mirror-token`) → hardcoded catalog snapshot (`src/hardcodedModelList.ts`) |
+| **Triple API Mode** | Supports the **OpenAI-compatible format** (`/chat/completions`), the **OpenAI Responses format** (`/responses`), and the **Anthropic format** (`/v1/messages`), selected by the model's `apiMode` |
+| **Session Header (OpenCode Go)** | Sends the `x-opencode-session` header on inference requests (OpenCode Go requires it since 2026-09-05 for routing and prompt-cache optimization). Session IDs are managed by a registry persisted in `globalState` (3-day sliding TTL, LRU cap of 512 entries): the first turn uses a random UUID, registered after the turn completes under `hash(model + first user text + first assistant text)`; later turns resolve the same ID from the re-sent history. Upstream-provider failures trigger a session-ID rotation and one retry. `multiLLM.resetSessionRouting` clears the registry |
 | **Streaming Inference** | Supports SSE (Server-Sent Events) streaming responses, outputting text and tool calls in real time |
 | **Thinking / Reasoning** | Supports displaying the model's reasoning process ("thinking" state), including XML think block parsing |
 | **Tool Calling** | Supports VS Code's `LanguageModelToolCallPart` mechanism |
-| **Image Proxy (Tool-based)** | Injects the `ask_image` tool for non-vision models. The model can autonomously choose to call a vision model (default: Qwen3.6-Plus) to answer specific questions about images, supporting a two-round API request flow: "call tool → ask question → get answer → continue answering." Unlike the older `describe_image`, `ask_image` allows the model to ask specific questions about an image (e.g., "What color is the button?"), and the vision model answers specifically. The vision model ID, query prompt, and thinking mode are all configurable via settings; the vision proxy displays "Asking about image: [question]" within the same thinking block and appends the vision model's streaming output in real time |
+| **Image Proxy (Tool-based)** | Injects the `ask_image` tool for non-vision models. The model can autonomously choose to call a vision model (default: `qwen-plus-latest`, resolved to the newest qwen*-plus model in the catalog) to answer specific questions about images, supporting a multi-round API request flow: "call tool → ask question → get answer → continue answering." Unlike the older `describe_image`, `ask_image` allows the model to ask specific questions about an image (e.g., "What color is the button?"), and the vision model answers specifically. Each completed internal vision call also emits a private-MIME `LanguageModelDataPart` so the next turn can rebuild the standard tool call + result pair. The vision model ID, query prompt, thinking mode, and max rounds are all configurable via settings; the vision proxy displays "Asking about image: [question]" within the same thinking block and appends the vision model's streaming output in real time |
+| **MCP Tool Image Support** | Fully supports images returned by MCP tools (e.g. Chrome DevTools `take_screenshot`, photoshop-mcp): `type: image` / blob-bearing `resource` arrive as image data parts; `resource` / `resource_link` (no blob) arrive as `application/vnd.code.resource-link` data parts, which the extension resolves to actual image bytes via `vscode.workspace.fs.readFile`. Vision models receive the image directly; non-vision models store it in `_localImages` for the `ask_image` proxy. Unresolvable links are surfaced as text |
 | **Token Counting** | Uses the `o200k_base` tiktoken tokenizer for precise token usage statistics |
-| **Status Bar** | Real-time display of the current session's token usage, cumulative usage, and cache hit rate |
+| **Status Bar** | The status bar main text shows OpenCode Go plan usage; cumulative token usage and cache hit rate live in the tooltip |
 | **Native Token Indicator** | Always enabled, reports token usage to Copilot Chat's native Token indicator. Implemented by sending a `LanguageModelDataPart` with MIME type `usage` (JSON encoded via TextEncoder), without needing a custom status bar. Depends on VS Code / Copilot Chat 1.116+ recognition of the `usage` data part for external models |
-| **Advanced Token Indicator** | Controlled by the `opencodego.enableThirdPartyTokenIndicator` setting (enabled by default) to show an advanced token counter in the VS Code status bar. When disabled, only the native indicator is shown |
-| **Git Commit Message Generation** | One-click generation of Conventional Commit-format Git commit messages, supporting `auto` language mode to automatically detect language from historical commits |
+| **Advanced Token Indicator** | Controlled by the `multiLLM.enableThirdPartyTokenIndicator` setting (enabled by default) to show an advanced token counter in the VS Code status bar. When disabled, only the native indicator is shown |
+| **Plan Usage Monitoring** | Fetches OpenCode Go plan usage from `GET /zen/go/v1/usage` (5-hour rolling / weekly / monthly windows plus a `useBalance` fallback flag). The status bar main text shows the 5H window usage (`$(symbol-numeric) Go 5H 65%`, or `Go --` when unavailable); the tooltip shows all three windows and the 5h reset countdown (`multiLLM.showUsageInTooltip`, enabled by default). Background polling uses `multiLLM.usageRefreshInterval` (default 5 minutes, 1-60). Clicking the status bar item or running `multiLLM.checkUsage` forces an immediate refresh. No polling without an API key; 401 and network failures degrade silently |
+| **Git Commit Message Generation** | One-click generation of Conventional Commit-format Git commit messages, supporting `auto` language mode to automatically detect language from historical commits. The SCM title bar button can be hidden via `multiLLM.enableCommitGeneration` |
 | **Multi-Repository Support** | Supports commit message generation for multiple Git repositories in multi-root workspaces |
 | **Model Presets** | Supports quick switching of temperature/top_p presets (🎯 Precise / ⚖️ Balanced / 🔥 Creative) via the command palette, as well as manual custom input |
 | **Internationalization** | Built-in bilingual interface in Simplified Chinese (zh-cn) and English |
 | **Retry Mechanism** | Configurable exponential backoff retry strategy for network jitter and rate limiting (429) |
 | **Request Delay** | Configurable inter-request delay to avoid triggering API rate limits |
 | **Timeout Control** | Configurable request timeout (default: 10 minutes) |
+| **Inference Base URL Override (Proxy)** | The `multiLLM.setInferenceBaseUrl` command overrides the base URL for inference requests (chat and Git commit generation) to a self-hosted proxy/gateway. The command first shows a compatibility notice in a QuickPick (protocol, paths, model IDs, and headers must match the official endpoint exactly) with "I Understand" / "Cancel" options; only after acknowledging does the input box appear. Leaving it empty clears the override. Stored in the machine-scoped `multiLLM.inferenceBaseUrl` setting; only inference requests are affected — usage and model list requests still use the official endpoint |
+| **HTTP Safety Check** | Always validates the base URL: rejects non-HTTP(S) protocols; for plain `http:` only localhost, 127.0.0.1, ::1, 192.168.*, 10.*, 0.0.0.0 and other local/private addresses are allowed, remote endpoints must use HTTPS |
 | **Immediate Cancellation** | When canceling a request, immediately interrupts stream reading via `reader.cancel()`, stopping background reception |
-| **Vision Proxy Configuration** | Supports configuring the vision model and thinking mode used by the image proxy via the `opencodego.visionProxyModel` and `opencodego.visionProxyThinking` settings. `opencodego.visionProxyThinking` is off by default; when off, internal requests disable vision model thinking via `modelOptions.thinking={ type: false }` / `reasoning_effort="disabled"`, and the final OpenAI-compatible request body sends `thinking: { type: false }` |
-| **Dynamic Model Rescan** | Running `Multi-LLM: Rescan Models` from the command palette forcibly re-fetches the `/v1/models` dynamic model list for any enabled provider (or all providers), bypassing the 5-minute cache and immediately refreshing model picker data |
-| **Installation Welcome Page (Walkthrough)** | Automatically opens a guided wizard on first install when no API Key is configured, guiding the user to set their API Key and open the language model manager. Contains 3 steps: Set API Key, Show Models, Advanced Settings. Detected immediately after VS Code startup via the `onStartupFinished` activation event |
+| **Vision Proxy Configuration** | Supports configuring the vision model, thinking mode, and max follow-up rounds via the `multiLLM.visionProxyModel`, `multiLLM.visionProxyThinking`, and `multiLLM.visionMaxRounds` settings. `multiLLM.visionProxyThinking` is off by default; when off, internal requests disable vision model thinking via `modelOptions.thinking={ type: false }` / `reasoning_effort="disabled"`, and the final OpenAI-compatible request body sends `thinking: { type: false }` |
+| **Dynamic Model Rescan** | Running `Multi-LLM: Rescan Models` from the command palette forcibly re-fetches the `/v1/models` dynamic model list for any enabled provider (or all providers), bypassing the 5-minute cache and clearing the API model list and models.dev catalog caches, immediately refreshing model picker data |
+| **Installation Welcome Page (Walkthrough)** | Automatically opens a guided wizard on first install when no API Key is configured, guiding the user to set their API Key and open the language model manager. Detected immediately after VS Code startup via the `onStartupFinished` activation event |
 
 ### 1.3 Model Catalog
 
-> **Automatic model discovery** (enabled by default) fetches the current available model list from the API, automatically hides built-in models not in the list, and automatically adds new models returned by the API from models.dev. The following is the full built-in model definition; what is actually displayed depends on API availability.
+> **Model lists are driven by the `multiLLM.providers` setting.** Each provider may declare static models (`models`) or a dynamic model endpoint (`modelsBaseUrl`). OpenCode Go / OpenCode Zen metadata is resolved by the built-in `models.dev` catalog layer (`catalog.json`, 1-minute cache); `src/modelOverrides.ts` only carries the few fields the catalog cannot express (e.g. Anthropic `apiMode`, `reasoning_split`).
 
-#### Built-in Models
+#### Model Sources
+
+| Provider | Source | Filter | Group (family) |
+|------|---------|------|----------|
+| Any (user-configured) | `multiLLM.providers[].models` (static) | none | the provider's `group` field |
+| Any (user-configured) | `multiLLM.providers[].modelsBaseUrl` (dynamic, OpenAI `/v1/models` format) | never overrides a static model with the same ID | the provider's `group` field |
+| `opencode-go` (OpenCode Go) | `catalog.json` → `providers["opencode-go"].models` | optionally filtered by the API `/models` list | `OpenCodeGo` |
+| `opencode` (OpenCode Zen) | `catalog.json` → `providers["opencode"].models` | `-free` suffix + hardcoded set (`big-pickle`) | `OpenCode Zen` |
+
+#### Default OpenCode Go Models
+
+The default `multiLLM.providers` configuration ships with these OpenCode Go models. What is actually displayed depends on the configuration and API availability.
 
 | Family | Model ID | Vision | Reasoning Intensity Selector | API Format |
 |------|---------|------|----------------|----------|
-| GLM | `glm-5.2`, `glm-5.1`, `glm-5` | ❌ | `Disable thinking` / `High` / `Max` (5.2)² / `Thinking` (5.1/5 does not support thinking switch) | OpenAI |
-| Kimi | `kimi-k3`¹, `kimi-k2.5`, `kimi-k2.6`, `kimi-k2.7-code`¹ | ✅ | `Disable thinking` / `Thinking` (K3); `Thinking` (K2.x, does not support thinking switch) | OpenAI |
-
-> ¹ `kimi-k3` and `kimi-k2.7-code` do not support setting Temperature/Top-p parameters.
-> ² GLM-5.2 supports setting thinking intensity (high/max) via reasoning_effort. GLM-5.1/GLM-5 do not support thinking switching.
-| DeepSeek | `deepseek-v4-pro`, `deepseek-v4-flash` | ❌ | `Disable thinking` / `High` / `Very high` | OpenAI |
+| GLM | `glm-5.1`, `glm-5` | ❌ | `Thinking` (does not support thinking switch) | OpenAI |
+| Kimi | `kimi-k2.5`, `kimi-k2.6`, `kimi-k2.7-code`¹ | ✅ | `Thinking` (does not support thinking switch) | OpenAI |
+| DeepSeek | `deepseek-v4-pro`, `deepseek-v4-flash` | ❌ | `Disable thinking` / `High` / `Maximum` | OpenAI |
 | MiMo | `mimo-v2-pro`, `mimo-v2-omni`, `mimo-v2.5-pro`, `mimo-v2.5` | mimo-v2-omni ✅ | `Disable thinking` / `Thinking` | OpenAI |
-| MiniMax | `minimax-m3`, `minimax-m2.7`, `minimax-m2.5` | ❌ | `Disable thinking` / `Auto` | OpenAI (m2.7 uses Anthropic) |
-| Qwen | `qwen3.7-max` | ❌ | `Disable thinking` / `Auto` | Anthropic |
-| Qwen | `qwen3.6-plus`, `qwen3.5-plus` | ✅ | `Disable thinking` / `Auto` | Anthropic |
+| MiniMax | `minimax-m3` | ✅ | `Disable thinking` / `Adaptive` | Anthropic |
+| MiniMax | `minimax-m2.7`, `minimax-m2.5` | ❌ | `Thinking` (does not support thinking switch) | Anthropic |
+| Qwen | `qwen3.7-max` | ❌ | `Disable thinking` / `Thinking` | Anthropic |
+| Qwen | `qwen3.7-plus`, `qwen3.6-plus`, `qwen3.5-plus` | ✅ | `Disable thinking` / `Thinking` | Anthropic |
+
+> ¹ `kimi-k2.7-code` does not support setting Temperature/Top-p parameters.
 
 #### OpenCode Zen Free Models (Optional)
 
-Enabled via the `opencodego.enableZenFreeModels` setting (disabled by default). Fetches the model list from the Zen API, filters by hardcoded IDs, and appends them to the model picker.
+Enabled via the `multiLLM.enableZenFreeModels` setting (disabled by default). Fetches the model list from the Zen API, filters by hardcoded IDs, and appends them to the model picker.
 
 | Display Name | Model ID | Vision | Reasoning Intensity Selector | API Format | Notes |
 |--------|---------|------|----------------|----------|------|
@@ -84,7 +100,7 @@ Enabled via the `opencodego.enableZenFreeModels` setting (disabled by default). 
 | Zen/Ring 2.6 1T Free | `ring-2.6-1t-free` | ❌ | `Disable thinking` / `Thinking` | OpenAI | Time-limited free |
 | Zen/Nemotron 3 Super Free | `nemotron-3-super-free` | ❌ | `Disable thinking` / `Thinking` | OpenAI | Time-limited free |
 
-In the model picker, built-in models are grouped under `OpenCode Go` (`family="OpenCodeGo"`), while Zen free models are grouped under `OpenCode Zen` (`family="OpenCode Zen"`) for differentiation.
+In the model picker, OpenCode Go models are grouped under `OpenCode Go` (`family="OpenCodeGo"`), while Zen free models are grouped under `OpenCode Zen` (`family="OpenCode Zen"`) for differentiation.
 
 > All models appear as **a single entry** in the model picker, with thinking mode switched via the **reasoning intensity selector** (Chinese labels).  
 > - `thinkingMode="switchable"`: Users can choose `Disable thinking`, `Auto`, or enable thinking (configurable intensity)  
@@ -105,16 +121,17 @@ In the model picker, built-in models are grouped under `OpenCode Go` (`family="O
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │  User sends message → LanguageModelChatProvider               │  │
 │  │                    ↓                                          │  │
-│  │  OpenCodeGoChatModelProvider (provider.ts)                    │  │
-│  │   1. Get model config (getBuiltInModelConfig)                 │  │
-│  │   2. Get API Key (SecretStorage)                              │  │
+│  │  MultiLLMChatModelProvider (provider.ts)                      │  │
+│  │   1. Get model config (getModelConfig / catalog fallback)     │  │
+│  │   2. Get API Key (SecretStorage, per provider)                │  │
 │  │   3. Calculate token usage (provideToken → statusBar)         │  │
 │  │   3b. Optional: Report usage to Copilot Chat native indicator │  │
 │  │       (LanguageModelDataPart, MIME type "usage", VS Code 1.116+)│ │
 │  │   4. Apply request delay                                      │  │
 │  │   5. Build request → API route selection                      │  │
-│  │      ├─ apiMode="openai"    → OpenaiApi                       │  │
-│  │      └─ apiMode="anthropic" → AnthropicApi                    │  │
+│  │      ├─ apiMode="openai"           → OpenaiApi                │  │
+│  │      ├─ apiMode="openai-responses" → ResponsesApi             │  │
+│  │      └─ apiMode="anthropic"        → AnthropicApi             │  │
 │  │   6. Send HTTP request (fetch with undici + timeout control)  │  │
 │  │   7. Parse streaming response → Progress<LanguageModelResponsePart2>│
 │  │      ├─ LanguageModelTextPart     (text)                      │  │
@@ -128,7 +145,7 @@ In the model picker, built-in models are grouped under `OpenCode Go` (`family="O
 │  SCM title bar button → generateCommitMsg()                        │
 │    → Get Git Diff (gitUtils.ts)                                    │
 │    → Get recent commits as style reference                         │
-│    → Build prompt → Call API (OpenaiApi/AnthropicApi)              │
+│    → Build prompt → Call API (OpenaiApi/ResponsesApi/AnthropicApi) │
 │    → Stream output to SCM InputBox                                 │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -139,16 +156,22 @@ In the model picker, built-in models are grouped under `OpenCode Go` (`family="O
 activate(context)
   ├── logger.init()                         ← Create LogOutputChannel
   ├── TokenizerManager.initialize()         ← Load o200k_base.tiktoken
-  ├── initStatusBar()                       ← Create status bar entry
-  ├── new OpenCodeGoChatModelProvider()      ← Create Provider instance
-  ├── vscode.lm.registerLanguageModelChatProvider("opencodego", provider)
+  ├── initStatusBar(context, secrets)       ← Create status bar entry + start Go usage polling
+  ├── new MultiLLMChatModelProvider()       ← Create Provider instance
+  ├── initSessionRouting(globalState)       ← Restore session ID registry (3-day TTL)
+  ├── vscode.lm.registerLanguageModelChatProvider("multiLLM", provider)
   ├── Register commands:
-  │   ├── opencodego.setApiKey                ← Set API Key
-  │   ├── opencodego.getApiKey                ← Open OpenCode AI site to get Key
-  │   ├── opencodego.openSettings             ← Open extension settings page
-  │   ├── opencodego.generateGitCommitMessage ← Generate commit message
-  │   ├── opencodego.abortGitCommitMessage    ← Abort generation
-  │   └── opencodego.setModelPreset           ← Set model preset
+  │   ├── multiLLM.setApiKey                ← Set API Key (pick provider first)
+  │   ├── multiLLM.openSettings             ← Open extension settings page
+  │   ├── multiLLM.manageProviders          ← GUI provider management
+  │   ├── multiLLM.rescanModels             ← Force model list rescan
+  │   ├── multiLLM.resetSessionRouting      ← Reset session routing
+  │   ├── multiLLM.setInferenceBaseUrl      ← Set proxy base URL
+  │   ├── multiLLM.generateGitCommitMessage ← Generate commit message
+  │   ├── multiLLM.abortGitCommitMessage    ← Abort generation
+  │   ├── multiLLM.setModelPreset           ← Set model preset
+  │   └── multiLLM.checkUsage               ← Check/refresh Go plan usage
+  ├── Warm up model discovery (fire-and-forget)
   ├── showWelcomeIfNeeded()                 ← Show welcome wizard on first install
   └── Register dispose cleanup
 ```
@@ -158,11 +181,10 @@ activate(context)
 ```
 provideLanguageModelChatResponse(model, messages, options, progress, token)
   │
-  ├── 1. Resolve model ID → getBuiltInModelConfig(model.id)
-  │       Format: "baseId" (no :: suffix)
-  │       All models registered as a single entry
-  │       Fallback to getZenFreeModelConfig(model.id) if built-in model not found
-  │       Fallback to getAutoDiscoveredModelConfig(model.id) if still not found
+  ├── 1. Resolve model ID → getModelConfig(model.id)
+  │       Format: "providerId:modelId" (composite ID)
+  │       Looks up the provider config and model definition (static first, then dynamic cache)
+  │       OpenCode Go / Zen models fall back to the catalog layer getCatalogModelConfig()
   │
   ├── 2. Apply user-configured reasoningEffort
   │       ├── "disabled" → Disable thinking (except for "always" models)
@@ -177,15 +199,18 @@ provideLanguageModelChatResponse(model, messages, options, progress, token)
   ├── 2c. Inject vision config
   │       └── modelConfig.vision = um?.vision ?? false
   │
-  ├── 3. Determine API mode (apiMode: "openai" | "anthropic")
+  ├── 3. Determine API mode (apiMode: "openai" | "openai-responses" | "anthropic")
   │
-  ├── 4. Log request start
+  ├── 3b. Resolve inference base URL: multiLLM.inferenceBaseUrl override > provider/model baseUrl
+  │       └── Validated by validateBaseUrl() before dispatch (HTTP only for local/private, HTTPS for remote)
+  │
+  ├── 4. Log request start (including session ID and registry hit)
   │
   ├── 5. Update status bar token usage
   │
   ├── 6. Apply request delay
   │
-  ├── 7. Ensure API Key exists
+  ├── 7. Ensure the API Key for the model's provider exists
   │
   ├── 8. Create request timeout AbortController
   │      └── Connect VS Code cancellation token → abort()
@@ -193,12 +218,22 @@ provideLanguageModelChatResponse(model, messages, options, progress, token)
   ├── 9. Create undici fetch (custom bodyTimeout)
   │
   ├── 9a. Build request headers → CommonApi.prepareHeaders()
-  │       └── Only when provider is `opencode-go`: inject `x-opencode-session`
-  │           (OpenCode Go requires it since 2026-09-05 for routing and prompt
-  │           cache optimization). Session ID derived by deriveOpencodeSessionId()
-  │           via SHA-256 of model ID + first user text message (stable across
-  │           turns), falling back to a random UUID for image-only requests.
-  │           Vision proxy follow-up rounds reuse the same request headers.
+  │       └── Inject `x-opencode-session` (OpenCode Go requires it since 2026-09-05
+  │           for routing and prompt cache optimization). Session IDs are managed by
+  │           the sessionRouting.ts registry: the first turn uses a random UUID
+  │           (registered after the turn completes under hash(model + first user text
+  │           + first assistant text)); later turns resolve the same ID from the
+  │           re-sent history. The registry persists in globalState (restored on
+  │           activation, 3-day sliding TTL). Vision proxy follow-up rounds reuse the
+  │           same request headers.
+  │
+  ├── 9c. Upstream-provider failure session rotation (#123 fallback):
+  │      └── _sendWithSessionFallback() wraps every request dispatch (all three
+  │          apiModes + each vision proxy round): on an upstream error (5xx, or 400
+  │          with api_error + upstream signature) rotateSessionId() issues a fresh
+  │          session ID and retries once (session affinity can pin a conversation to
+  │          a broken backend). Users can clear the registry via
+  │          multiLLM.resetSessionRouting.
   │
   ├── 9b. After obtaining Response body reader, register cancellation callback
   │      └── token.onCancellationRequested / signal.addEventListener("abort")
@@ -218,6 +253,16 @@ provideLanguageModelChatResponse(model, messages, options, progress, token)
   │     │       │   ├── Text content → LanguageModelTextPart
   │     │       │   └── Tool calls → LanguageModelToolCallPart
   │     │       └── Usage statistics (usage chunk)
+  │     ├── OpenAI Responses mode:
+  │     │   ├── ResponsesApi.convertMessages()
+  │     │   ├── ResponsesApi.prepareRequestBody()
+  │     │   ├── POST /responses
+  │     │   ├── executeWithRetry()
+  │     │   └── ResponsesApi.processStreamingResponse()
+  │     │       ├── SSE event parsing
+  │     │       ├── Text / reasoning deltas
+  │     │       ├── Function call arguments
+  │     │       └── Encrypted reasoning items captured for stateless replay
   │     └── Anthropic mode:
   │         ├── AnthropicApi.convertMessages()
   │         ├── AnthropicApi.prepareRequestBody()
@@ -310,6 +355,7 @@ Non-vision model receives message containing images:
            ├── Read interceptedToolCall
            ├── Emit LanguageModelThinkingPart
            ├── Call vision model with model's specific query
+           ├── Emit a private-MIME vision history DataPart (tool call + result)
            ├── Build current round messages
            ├── Inject tools: VS Code native + ask_image
            ├── Send API request and process streaming
@@ -323,9 +369,11 @@ Non-vision model receives message containing images:
 - **Tool coexistence**: Each round injects both VS Code native tools + ask_image
 - **Image data lifecycle**: Images stored in `_localImages`, reclaimed by GC when request ends
 - **OpenAI mode**: Uses `tool_calls` + `tool` role message format
+- **OpenAI Responses mode**: Uses `function_call` + `function_call_output` input items, replaying captured encrypted reasoning items
 - **Anthropic mode**: Uses `tool_use` + `tool_result` content block format
 - **Parameter preservation**: Each round preserves temperature, top_p, thinking mode, etc.
 - **DeepSeek compatibility**: Injects `reasoning_content` field into assistant tool_call messages
+- **Cross-turn persistence**: Each completed vision call is emitted as a `application/vnd.multillm.vision-tool-history+json` DataPart so the next turn rebuilds the standard tool call + result pair
 
 ### 2.7 Git Commit Message Generation Flow
 
@@ -348,7 +396,7 @@ generateCommitMsg(secrets, scm?)
   │   ├── User's current input (SCM InputBox)
   │   └── Git Diff content
   ├── Call API:
-  │   ├── OpenaiApi.createMessage() / AnthropicApi.createMessage()
+  │   ├── OpenaiApi.createMessage() / ResponsesApi.createMessage() / AnthropicApi.createMessage()
   │   └── Stream output to SCM InputBox
   └── Cleanup: Remove ``` markers and <think> tags
 ```
@@ -362,22 +410,31 @@ generateCommitMsg(secrets, scm?)
 ```
 src/
 ├── apiModelList.ts                       # API model list fetching
+├── catalogModels.ts                      # Unified catalog model resolution/build layer (Go + Zen)
 ├── commonApi.ts                          # API abstract base class
 ├── extension.ts                          # Extension entry (activate/deactivate)
+├── goUsage.ts                            # OpenCode Go plan usage fetching and caching
+├── hardcodedModelList.ts                 # Hardcoded catalog fallback snapshot
 ├── localize.ts                           # Internationalization / localization
 ├── logger.ts                             # Logging system
-├── models.ts                             # Built-in model definitions
-├── modelsDev.ts                          # models.dev metadata fetching and querying
-├── provideModel.ts                       # Model info provider functions (including auto discovery)
+├── modelOverrides.ts                     # Per-model override table (fields the catalog cannot express)
+├── modelsDev.ts                          # models.dev catalog fetching and querying
+├── provideModel.ts                       # Model info provider functions (multi-provider + catalog)
 ├── provider.ts                           # Chat model provider (core main file)
+├── providerEditor.ts                     # Provider configuration GUI editor
+├── providers.ts                          # Multi-provider config, dynamic model cache, API key management
 ├── provideToken.ts                       # Token counting functions
+├── sessionRouting.ts                     # x-opencode-session session ID registry/rotation
 ├── statusBar.ts                          # Status bar management
 ├── types.ts                              # TypeScript type definitions
 ├── utils.ts                              # General utility functions
 ├── versionManager.ts                     # Version info management
 ├── openai/
 │   ├── openaiApi.ts                      # OpenAI-compatible API implementation
-│   └── openaiTypes.ts                    # OpenAI type definitions
+│   ├── openaiTypes.ts                    # OpenAI type definitions
+│   ├── responsesApi.ts                   # OpenAI Responses API implementation
+│   ├── responsesState.ts                 # Responses encrypted reasoning state DataPart codec
+│   └── responsesTypes.ts                 # OpenAI Responses type definitions
 ├── anthropic/
 │   ├── anthropicApi.ts                   # Anthropic API implementation
 │   └── anthropicTypes.ts                 # Anthropic type definitions
@@ -387,51 +444,52 @@ src/
 ├── tokenizer/
 │   ├── tokenizerManager.ts               # Tokenizer management (o200k_base)
 │   └── imageUtils.ts                     # Image dimension parsing
-├── vision/
-│   ├── types.ts                          # Vision proxy type definitions
-│   └── imageProxy.ts                     # Image proxy core (ask_image)
-├── zen/
-│   └── zenModels.ts                      # Zen free model definitions and API interaction
-└── resources/
-    └── walkthrough/                      # Installation welcome page (Walkthrough) docs
-        ├── set-api-key.md                # Step 1: Set API Key
-        ├── set-api-key.nls.zh-cn.md      # Step 1 Chinese version
-        ├── show-models.md                # Step 2: Show Models
-        ├── show-models.nls.zh-cn.md      # Step 2 Chinese version
-        ├── advanced-settings.md          # Step 3: Advanced Settings
-        └── advanced-settings.nls.zh-cn.md# Step 3 Chinese version
+└── vision/
+    ├── types.ts                          # Vision proxy type definitions
+    ├── historyCodec.ts                   # Vision tool history serialization/validation and API message rebuild
+    ├── historyPart.ts                    # VS Code vision history DataPart creation and parsing
+    └── imageProxy.ts                     # Image proxy core (ask_image)
 ```
 
 ### 3.2 File Details
 
 | File | Lines | Responsibility |
 |------|------|------|
-| `extension.ts` | ~210 | Extension activation/deactivation, registers Provider and 7 commands, first-install welcome page guidance |
-| `providers.ts` | ~320 | Multi-provider config reading, dynamic model cache, API key management, model config resolution |
-| `provider.ts` | ~700 | Implements `LanguageModelChatProvider`, handles full chat request flow and image proxy multi-round loop |
-| `models.ts` | ~230 | 17 built-in model definitions, model config queries (all models declare `imageInput: true`) |
-| `types.ts` | ~95 | Types: `OpenCodeGoModelItem`, `ModelPreset`, `ModelsResponse`, `RetryConfig`, etc. |
-| `apiModelList.ts` | ~80 | API model list fetching from `/zen/go/v1/models`, 5-minute cache, silent degradation |
-| `modelsDev.ts` | ~130 | models.dev metadata fetching and querying, supports short ID matching, 1-hour cache |
-| `commonApi.ts` | ~462 | `CommonApi<TMessage,TRequestBody>` abstract base class (image storage, tool call interception) |
-| `provideModel.ts` | ~130 | Model info provider functions (including auto discovery): filters built-in models, auto-discovers new models |
-| `provideToken.ts` | ~100 | Token usage calculation |
-| `utils.ts` | ~285 | Utility functions (retry, role mapping, tool conversion, etc.) |
-| `statusBar.ts` | ~140 | Status bar creation, updates, cumulative counters |
+| `extension.ts` | ~430 | Extension activation/deactivation, registers Provider and 10 commands, first-install welcome page guidance |
+| `providers.ts` | ~520 | Multi-provider config reading, dynamic model cache, API key management, model config resolution, forced rescan |
+| `providerEditor.ts` | ~510 | Provider configuration GUI editor (add/edit/delete providers, model list, API key setup) |
+| `provider.ts` | ~1150 | Implements `LanguageModelChatProvider`, handles full chat request flow and image proxy multi-round loop |
+| `catalogModels.ts` | ~400 | Unified catalog resolution layer: `ModelMeta` merge chain (`MODEL_OVERRIDES` > catalog entry > defaults), `buildCatalogModelInfo()`, `getCatalogModelConfig()`, `resolveProviderForModelId()`/`isZenFreeModelId()`, `resolveVisionProxyModelId()` |
+| `hardcodedModelList.ts` | ~4880 | Hardcoded catalog fallback snapshot with full metadata for opencode-go and opencode models; last resort when both the official catalog and mirror are unreachable |
+| `modelOverrides.ts` | ~75 | Per-model override table `MODEL_OVERRIDES` (all fields optional) + `ModelMetaOverride` type; only carries what models.dev cannot express (Anthropic apiMode, adaptive, `reasoning_split`, etc.) |
+| `types.ts` | ~110 | Types: `ApiMode`, `MultiLLMModelItem` (alias `OpenCodeGoModelItem`), `ProviderConfig`, `ProviderModelDef`, `ModelPreset`, `ModelsResponse`, `RetryConfig`, etc. |
+| `apiModelList.ts` | ~120 | API model list fetching from the catalog-resolved base URL's `/models` endpoint, 1-minute cache, silent degradation |
+| `goUsage.ts` | ~260 | OpenCode Go plan usage fetching from `GET /zen/go/v1/usage` (5h/weekly/monthly windows + `useBalance`), 5-minute TTL cache, tolerant field-name parsing, reset countdown/summary formatting |
+| `modelsDev.ts` | ~560 | models.dev catalog fetching and querying: three-tier fallback chain (official → mirror → hardcoded), indexes global models and providers, short-ID matching, provider queries, `reasoning_options`/thinking mode/vision/budget inference, 1-minute cache |
+| `commonApi.ts` | ~470 | `CommonApi<TMessage,TRequestBody>` abstract base class (image storage, tool call interception, User-Agent config) |
+| `provideModel.ts` | ~35 | Model info provider functions: delegates to `providers.ts` `getAllModelInfos()`; `resetAutoDiscoveryState()` clears all model caches |
+| `provideToken.ts` | ~105 | Token usage calculation |
+| `utils.ts` | ~570 | Utility functions (retry, role mapping, base URL override/validation, OpenAI Chat/Responses tool conversion, resource-link resolution, etc.) |
+| `statusBar.ts` | ~317 | Status bar creation, updates, cumulative counters, Go usage polling and tooltip section rendering |
 | `logger.ts` | ~55 | Log output (LogOutputChannel) |
-| `localize.ts` | ~109 | Chinese/English internationalization |
-| `versionManager.ts` | ~35 | Extension version info |
-| `openai/openaiApi.ts` | ~613 | OpenAI-format API implementation (message conversion / request building / streaming / image proxy) |
+| `localize.ts` | ~140 | Chinese/English internationalization (including reasoning effort labels and base URL proxy text) |
+| `versionManager.ts` | ~35 | Extension version info (uses the correct extension ID `allgood.multi-llm-copilot-provider`) |
+| `sessionRouting.ts` | ~313 | `x-opencode-session` session ID registry: `initSessionRouting()`, `resolveSessionId()`, `registerSessionId()`, `rotateSessionId()`, `resetSessionRouting()`, `isUpstreamProviderFailureError()` |
+| `openai/openaiApi.ts` | ~700 | OpenAI-format API implementation (message conversion / request building / streaming / image proxy) |
 | `openai/openaiTypes.ts` | ~75 | OpenAI type definitions |
-| `anthropic/anthropicApi.ts` | ~535 | Anthropic-format API implementation (message conversion / request building / streaming / image proxy) |
+| `openai/responsesApi.ts` | ~550 | OpenAI Responses format API implementation: typed input items, flat tool definitions, request parameter mapping, Responses SSE text/reasoning/tool/usage parsing |
+| `openai/responsesState.ts` | ~60 | Validates and encodes/decodes the `reasoning.encrypted_content` private DataPart so `store:false` Responses reasoning models can continue statelessly across requests |
+| `openai/responsesTypes.ts` | ~122 | OpenAI Responses request, input item, tool, usage, and stream event type definitions |
+| `anthropic/anthropicApi.ts` | ~690 | Anthropic-format API implementation (message conversion / request building / streaming / image proxy) |
 | `anthropic/anthropicTypes.ts` | ~130 | Anthropic type definitions |
-| `gitCommit/commitMessageGenerator.ts` | ~295 | Git commit message generation logic |
+| `gitCommit/commitMessageGenerator.ts` | ~320 | Git commit message generation logic |
 | `gitCommit/gitUtils.ts` | ~260 | Git command wrappers |
 | `tokenizer/tokenizerManager.ts` | ~115 | o200k_base tokenizer management (with LRU cache) |
 | `tokenizer/imageUtils.ts` | ~130 | Image dimension parsing (PNG/GIF/JPEG/WebP) |
 | `vision/types.ts` | ~53 | Vision proxy type definitions |
-| `vision/imageProxy.ts` | ~95 | Image proxy core: `callVisionModel`/`callVisionModelMulti`, thinking mode config and text streaming |
-| `zen/zenModels.ts` | ~256 | Zen free model definitions, API fetching, cache management, config queries |
+| `vision/historyCodec.ts` | ~170 | Vision tool history DataPart MIME, validation/codec, and standard tool call/result rebuild for OpenAI Chat, OpenAI Responses, and Anthropic |
+| `vision/historyPart.ts` | ~20 | Creates and parses the `application/vnd.multillm.vision-tool-history+json` DataPart |
+| `vision/imageProxy.ts` | ~130 | Image proxy core: `callVisionModel`/`callVisionModelMulti`, vision model resolution, thinking mode config and text streaming |
 
 ---
 
@@ -440,7 +498,7 @@ src/
 ### 4.1 `src/extension.ts`
 
 #### `activate(context: vscode.ExtensionContext): void`
-Extension activation entry point. Initializes logger, tokenizer, and status bar; registers the `LanguageModelChatProvider`; registers seven commands (Set API Key, Open Extension Settings, Generate Git Commit Message, Abort Generation, Set Model Preset, Manage Providers, Rescan Models); calls `showWelcomeIfNeeded()` on first install.
+Extension activation entry point. Initializes logger, tokenizer, and status bar; restores the session ID registry; registers the `LanguageModelChatProvider`; registers ten commands (Set API Key, Open Extension Settings, Manage Providers, Rescan Models, Reset Session Routing, Generate Git Commit Message, Abort Generation, Set Model Preset, Check Usage, Set Proxy Base URL); warms up model discovery (fire-and-forget); calls `showWelcomeIfNeeded()` on first install.
 
 #### `showWelcomeIfNeeded(context: vscode.ExtensionContext): Promise<void>`
 Checks whether the welcome page has already been shown (via `WELCOME_SHOWN_KEY` in `globalState`). If already marked or an API Key already exists, returns directly; otherwise opens the Walkthrough page and sets the marker. Silently handles exceptions.
@@ -483,7 +541,7 @@ Converts hardcoded `ProviderModelDef` into runtime `MultiLLMModelItem`. Passes t
 
 ### 4.3 `src/provider.ts`
 
-#### `class OpenCodeGoChatModelProvider implements LanguageModelChatProvider`
+#### `class MultiLLMChatModelProvider implements LanguageModelChatProvider`
 Core Provider class. Manages request timing, API routing, model config resolution, streaming response processing, image proxy handling, and error management.
 
 #### `provideLanguageModelChatInformation(options, _token): Promise<LanguageModelChatInformation[]>`
@@ -493,35 +551,109 @@ Gets available language models list. Delegates to `prepareLanguageModelChatInfor
 Counts tokens in text or messages. Delegates to `countMessageTokens()`.
 
 #### `provideLanguageModelChatResponse(model, messages, options, progress, token): Promise<void>`
-Core method: handles chat requests with streaming responses. Includes model config resolution (built-in → Zen fallback → auto-discovery fallback), API Key validation, reasoning effort application, temperature/top_p injection, delay control, timeout management, API routing, streaming parsing, image proxy interception handling, and error handling.
+Core method: handles chat requests with streaming responses. Includes model config resolution (provider config → catalog fallback), API Key validation, reasoning effort application, temperature/top_p injection, delay control, timeout management, API routing (OpenAI / OpenAI Responses / Anthropic), streaming parsing, image proxy interception handling, session ID registration, and error handling.
+
+#### `private async _sendWithSessionFallback(send, rotateSession): Promise<Response>`
+Sends a request, retrying once with a rotated `x-opencode-session` when the failure is an upstream-provider error (session affinity can pin a conversation to a broken backend). The rotated ID is persisted for later turns inside `rotateSessionId()`.
 
 #### `private async _handleInterceptedToolCall(params): Promise<void>`
-Handles image proxy interception. Loops for up to `visionMaxRounds` rounds. Each round: reads interceptedToolCall, emits thinking block, calls vision model, builds API request, injects tools, processes response. Preserves original parameters across rounds. Uses `_resetStreamState()` between rounds.
+Handles image proxy interception. Loops for up to `visionMaxRounds` rounds. Each round: reads interceptedToolCall, emits thinking block, calls vision model, emits a private-MIME vision history DataPart, builds API request, injects tools, processes response. Preserves original parameters across rounds. Uses `_resetStreamState()` between rounds.
 
-#### `private async ensureApiKey(): Promise<string | undefined>`
-Ensures API Key exists in SecretStorage; prompts user with input box if missing.
-
-#### `deriveOpencodeSessionId(modelId, messages): string` (module-level function)
-Derives a stable per-conversation session ID for the `x-opencode-session` header. OpenCode Go requires a stable per-conversation ID on every inference request (used server-side for routing and prompt-cache optimization; requests without it error since 2026-09-05). Since VS Code does not expose a conversation identifier to language model providers, the ID is derived deterministically from the target model ID + the conversation's first user message text via SHA-256 (formatted as a canonical UUID). Chat clients re-send the same history on every turn, so the derived ID stays stable across turns while differing between conversations. Skips binary data parts (images); falls back to a random UUID when the conversation has no user text anchor (e.g. image-only requests).
+#### `private async getModelApiKey(providerId): Promise<string | undefined>`
+Resolves the API key for a provider from SecretStorage; prompts the user with an input box when missing.
 
 ---
 
-### 4.4 `src/models.ts`
+### 4.4 `src/catalogModels.ts`
 
-#### `interface BuiltInModelDef`
-Built-in model definition interface with fields: `baseId`, `displayName`, `vision`, `thinkingMode`, `defaultReasoningEffort`, `supportedReasoningEfforts`, `includeReasoningInRequest`, `supportsTemperature`, `contextLength`, `maxTokens`, `extra`, `apiMode`.
+#### `resolveModelMeta(providerId, modelId): ModelMeta`
+Resolves final model metadata through the merge chain: catalog entry (provider-specific → global → conservative defaults) then `MODEL_OVERRIDES[modelId]` per field.
 
-#### `const BUILT_IN_MODELS: BuiltInModelDef[]`
-Constant array of 17 built-in model definitions.
+#### `buildCatalogModelInfo(providerId, modelId): LanguageModelChatInformation`
+Builds a model picker entry (name, tooltip, family, context/output limits, capabilities, reasoning effort enum).
 
-#### `getBuiltInModelInfos(): LanguageModelChatInformation[]`
-Converts built-in model definitions to VS Code model info list. Each model registered as a single entry with `isUserSelectable: true` and reasoning intensity selector via `configurationSchema`.
+#### `getCatalogModelConfig(modelId): OpenCodeGoModelItem`
+Builds the request config for a model, resolving the provider (Go vs Zen) from the model ID.
 
-#### `getBuiltInModelCount(): number`
-Returns total built-in model count.
+#### `resolveProviderForModelId(modelId): ProviderId` / `isZenFreeModelId(modelId): boolean`
+Resolve whether a model ID belongs to OpenCode Zen (`-free` suffix or the hardcoded `big-pickle` set) or OpenCode Go.
 
-#### `getBuiltInModelConfig(modelId: string): OpenCodeGoModelItem | undefined`
-Looks up built-in model definition by model ID. Thinking mode enablement is dynamically determined by `provider.ts`.
+#### `resolveVisionProxyModelId(configuredId): Promise<string>`
+Resolves the special `qwen-plus-latest` alias to the newest qwen*-plus model served by the opencode-go provider in the catalog; other values pass through unchanged.
+
+#### `isModelDeprecated(providerId, modelId): boolean`
+Whether the catalog marks a model as deprecated (hidden from the picker unless `multiLLM.showDeprecatedModels` is enabled).
+
+---
+
+### 4.4.1 `src/modelOverrides.ts`
+
+#### `MODEL_OVERRIDES: Record<string, ModelMetaOverride>`
+Per-model override table. Only carries fields the catalog cannot express: `apiMode` (Anthropic vs OpenAI), `thinkingMode="adaptive"` semantics, `extra` request-body parameters (e.g. `reasoning_split`), and default reasoning effort tuning.
+
+---
+
+### 4.4.2 `src/sessionRouting.ts`
+
+#### `initSessionRouting(storage: vscode.Memento): void`
+Restores the session ID registry from extension `globalState`, dropping entries unused for more than the 3-day TTL. Must be called during activation.
+
+#### `resolveSessionId(modelId, messages): SessionResolution`
+Resolves the session ID for an outgoing request: reuses the registered ID when the re-sent history identifies a known conversation, otherwise returns a fresh random UUID (caller registers it after the turn completes).
+
+#### `registerSessionId(modelId, messages, turnOutput, sessionId): void`
+Registers the session ID under the anchor the next turn will look up: `hash(model + first user text + first assistant text)`.
+
+#### `rotateSessionId(modelId, messages): string`
+Returns a fresh session ID after an upstream-provider failure so retries and later turns are routed away from the broken backend.
+
+#### `resetSessionRouting(): number`
+Clears all registered session IDs; returns the number of cleared registrations.
+
+#### `isUpstreamProviderFailureError(err): boolean`
+Detects upstream-provider failures (5xx, or 400 with `api_error` + upstream signature) worth a session-ID rotation.
+
+---
+
+### 4.4.3 `src/goUsage.ts`
+
+#### `getGoUsageCached(apiKey, force?): Promise<GoUsageResult | null>`
+Fetches OpenCode Go plan usage from `GET /zen/go/v1/usage` with a 5-minute TTL cache; tolerant field-name parsing (`percent`/`usagePercent`, `resetsAt`/`resetInSec`).
+
+#### `getUsageSnapshot(): GoUsageResult | null` / `getUsageFetchStatus(): string`
+Return the cached usage snapshot and the last fetch status (e.g. `unauthorized`).
+
+#### `formatResetDuration(resetsAt): string` / `formatUsageSummary(usage): string`
+Format the 5h window reset countdown and a one-line usage summary.
+
+---
+
+### 4.4.4 `src/vision/historyCodec.ts` + `src/vision/historyPart.ts`
+
+#### `VISION_TOOL_HISTORY_MIME`
+Private MIME type (`application/vnd.multillm.vision-tool-history+json`) used to persist intercepted vision tool calls in the provider response so VS Code can carry them into the next request.
+
+#### `serializeVisionToolHistory(entry)` / `deserializeVisionToolHistory(data)`
+Encode/decode and validate one completed vision tool call/result.
+
+#### `toOpenAIVisionToolMessages(entry)` / `toResponsesVisionToolItems(entry)` / `toAnthropicVisionToolMessages(entry)`
+Rebuild the standard tool call + result pair for each protocol.
+
+#### `createVisionToolHistoryPart(entry)` / `parseVisionToolHistoryPart(part)`
+Create and parse the hidden response DataPart.
+
+---
+
+### 4.4.5 `src/openai/responsesApi.ts` + `src/openai/responsesState.ts`
+
+#### `class ResponsesApi extends CommonApi<ResponsesInputItem, ResponsesRequestBody>`
+OpenAI Responses format adapter: typed input items, flat tool definitions, request parameter mapping, and Responses SSE parsing (text / reasoning / tool calls / usage).
+
+#### `takeCapturedReasoningItems(): ResponsesInputItem[]`
+Returns and clears the encrypted reasoning items captured during streaming, so `store:false` reasoning models can continue statelessly across requests.
+
+#### `RESPONSES_REASONING_MIME`
+Private MIME type for the `reasoning.encrypted_content` DataPart codec.
 
 ---
 
@@ -571,11 +703,11 @@ Looks up models.dev metadata by API model ID. Matching: exact full ID, short ID,
 
 ### 4.9 `src/provideModel.ts`
 
-#### `prepareLanguageModelChatInformation(options, _token, _secrets): Promise<LanguageModelChatInformation[]>`
-Gets model info list. Uses hardcoded built-in models by default. When auto-discovery is enabled, filters built-in models by API availability and auto-discovers new models from models.dev. When Zen free models are enabled, appends them.
+#### `prepareLanguageModelChatInformation(options, _token, secrets): Promise<LanguageModelChatInformation[]>`
+Gets the model info list. Delegates to `providers.ts` `getAllModelInfos()`, which aggregates models from every enabled provider (static definitions plus optional dynamic discovery).
 
-#### `getAutoDiscoveredModelConfig(modelId): OpenCodeGoModelItem | undefined`
-Returns previously auto-discovered model config. Used as third fallback in model config resolution.
+#### `resetAutoDiscoveryState(): void`
+Clears every cached model source (`clearModelCache()`, `clearApiModelCache()`, `clearModelsDevCache()`) so the next model list request re-fetches fresh data. Used by the `multiLLM.rescanModels` command.
 
 ---
 
@@ -661,13 +793,13 @@ Vision proxy type definitions: `StoredImage`, `InterceptedToolCall`, `ASK_IMAGE_
 
 ### 4.23 `src/vision/imageProxy.ts`
 
-`callVisionModel()` and `callVisionModelMulti()` — Call vision model to answer queries about images. Supports thinking mode configuration and streaming text forwarding.
+`callVisionModel()` and `callVisionModelMulti()` — Call vision model to answer queries about images. Supports thinking mode configuration and streaming text forwarding. `resolveVisionModel()` resolves the configured bare model ID against VS Code's vendor-prefixed `LanguageModelChat.id` (exact match first, then bare-ID suffix match preferring this extension's own vendor).
 
 ---
 
-### 4.24 `src/zen/zenModels.ts`
+### 4.24 `src/providers.ts` (multi-provider layer)
 
-Zen free model definitions and API interaction. `fetchZenModelList()`, `buildModelInfos()`, `getZenFreeModelInfos()` (with 5-minute cache and optimistic degradation), `getZenFreeModelConfig()`.
+`getProviders()`, `getAllModelInfos()`, `getModelConfig()`, `parseCompositeModelId()`, `rescanProviderModels()`, `clearModelCache()`, `getProviderApiKey()` / `storeProviderApiKey()` / `deleteProviderApiKey()` (SecretStorage, keyed `multiLLM.provider.<id>.apiKey`), `defToModelItem()`.
 
 ---
 
@@ -688,6 +820,12 @@ npx tsc --noEmit
 
 # Continuous watch mode
 npm run watch
+
+# Run unit tests (compiles first)
+npm test
+
+# Refresh the hardcoded catalog snapshot (release builds do this automatically)
+node scripts/update-hardcoded-catalog.mjs
 
 # Package VSIX
 npm run build
@@ -757,10 +895,10 @@ Organized by feature category using `###` headings. Each change point uses `- **
 
 | Category | Convention | Example |
 |------|------|------|
-| Class | PascalCase | `OpenCodeGoChatModelProvider` |
-| Interface | PascalCase | `BuiltInModelDef` |
+| Class | PascalCase | `MultiLLMChatModelProvider` |
+| Interface | PascalCase | `ProviderModelDef` |
 | Type | PascalCase | `OpenAIChatRole` |
-| Function | camelCase | `getBuiltInModelConfig` |
+| Function | camelCase | `getModelConfig` |
 | Variable | camelCase | `requestTimeoutMs` |
 | Constant | UPPER_SNAKE_CASE | `BASE_TOKENS_PER_MESSAGE` |
 | Private property | `_` prefix | `_lastRequestTime` |

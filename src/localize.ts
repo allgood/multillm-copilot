@@ -2,10 +2,25 @@ import * as vscode from "vscode";
 
 const zhCN: Record<string, string> = {
     // statusBar
+    "Go Usage": "Go 用量",
+    "Go usage and token usage": "Go 用量与 Token 用量",
     "Token Count": "Token 计数",
     "Token Usage": "Token 使用量",
     "Current model token usage": "当前模型 token 使用量",
     "Ready": "就绪",
+
+    // statusBar Go usage tooltip section
+    "Week": "周",
+    "Month": "月",
+    "5h window resets in {0}": "五小时窗口将在 {0} 后重置",
+
+    // extension.ts - checkUsage command
+    "No API key configured. Please run the 'OpenCode Go: Set API Key' command first.": "未配置 API 密钥。请先运行「OpenCode Go: 设置 API 密钥」命令。",
+    "OpenCode Go usage is unavailable (no active Go plan).": "无法获取 OpenCode Go 用量（没有有效的 Go 套餐）。",
+    "Failed to fetch OpenCode Go usage. See output for details.": "获取 OpenCode Go 用量失败，详情见输出面板。",
+
+    // extension.ts - session routing reset
+    "Session routing reset. The next request of each conversation will use a new session ID. ({0} cleared)": "会话路由已重置，各会话的下一次请求将使用新的会话 ID。（已清除 {0} 条）",
 
     // extension.ts - API key prompts
     "Select Provider": "选择提供商",
@@ -31,6 +46,8 @@ const zhCN: Record<string, string> = {
     // provider.ts
     "API key not found for this provider. Please set it in settings.": "未找到此提供商的 API 密钥。请在设置中配置。",
     "Invalid base URL configuration.": "无效的 Base URL 配置。",
+    "Plain HTTP is only allowed for localhost or private network addresses. Use HTTPS for remote endpoints.":
+        "纯 HTTP 仅允许用于本地或私有网络地址，远程端点请使用 HTTPS。",
 
     // statusBar cache tooltip
     "Cache": "缓存",
@@ -58,19 +75,27 @@ const zhCN: Record<string, string> = {
     "Low": "低",
     "Medium": "中",
     "High": "高",
-    "Maximum": "极高",
+    "Extra High": "超高",
+    "Maximum": "最高",
 
     // reasoning effort descriptions
     "Do not enable thinking": "不启用思考",
     "Automatically decide when to think": "自动决定何时思考",
     "Enable thinking": "启用思考",
-    "Reduce thinking, faster response": "减少思考，响应更快",
+    "Reduce thinking, faster response": "减少思考，更快响应",
     "Balance thinking and speed": "平衡思考与速度",
-    "Deeper thinking, slower response": "更深入的思考，但速度较慢",
-    "Maximum thinking depth, slowest response": "最大思考深度，速度最慢",
+    "Deeper thinking, slower response": "更深入思考，响应较慢",
+    "Very deep thinking, slower response": "非常深入的思考，响应很慢",
+    "Maximum thinking depth, slowest response": "最大思考深度，响应最慢",
 
     // reasoning effort title
     "Reasoning Effort": "推理强度",
+
+    // deprecated model marker (shown when multiLLM.showDeprecatedModels is enabled)
+    "[Depr] ": "[已弃用] ",
+
+    // Zen model tooltip warning (free but may collect data for training)
+    "Free models are available on OpenCode for a limited time. Data may be collected for training. See https://opencode.ai/docs/zen for details.": "OpenCode Zen 模型在有限时间内免费使用，可能会收集数据用于训练。详情请参见 https://opencode.ai/docs/zen。",
 
     // vision proxy
     "Querying vision model: \"{0}\"": "正在根据图片提问：{0}",
@@ -95,6 +120,16 @@ const zhCN: Record<string, string> = {
     "Set to temperature: {0} ({1})": "已设为温度 {0} ({1})",
     "Set to temperature: {0} (custom)": "已设为温度 {0} (自定义)",
     "Set to temp: {0}, top_p: {1} (custom)": "已设为温度 {0}, top_p {1} (自定义)",
+
+    // extension.ts - inference base URL override (setInferenceBaseUrl command)
+    "I Understand": "我已知晓",
+    "Cancel": "取消",
+    "Select 'I Understand' to continue, or press Esc to cancel": "选择「我已知晓」继续，按 Esc 取消",
+    "This feature is not for connecting to third-party providers — it is for routing requests through a local proxy service. All inference requests (chat and Git commit generation) are sent to this address. The proxy must be fully compatible with the official endpoint: same protocols and paths (/chat/completions, /responses, /v1/messages), same model IDs and headers (Authorization, x-opencode-session). Streaming (SSE) responses must pass through unchanged. Usage and model list requests still use the official endpoint. If you encounter problems after using a proxy, make sure the problem is not caused by the proxy before submitting an issue.": "本功能不是用于接入第三方提供商，而是用于接入本地代理服务。所有推理请求（聊天与 Git 提交生成）都会发送到该地址。代理必须与官方端点完全兼容：协议与路径一致（/chat/completions、/responses、/v1/messages），模型 ID 与请求头一致（Authorization、x-opencode-session），流式（SSE）响应原样透传、不得改写或丢弃。用量查询与模型列表仍访问官方地址。若你在使用代理后遇到问题，在提交 Issue 前请确保该问题不是由代理引发的。",
+    "Set Proxy Base URL": "设置代理 Base URL",
+    "Enter the proxy base URL (e.g. https://proxy.example.com/zen/go/v1). Leave empty to clear the override and use the official endpoint.": "输入代理服务的 Base URL（例如 https://proxy.example.com/zen/go/v1）。留空可清除覆盖，恢复使用官方端点。",
+    "Inference base URL override cleared. The official endpoint will be used.": "已清除推理 Base URL 覆盖，将使用官方端点。",
+    "Inference base URL set to: {0}": "推理 Base URL 已设置为：{0}",
     "{0} provider saved.": "{0} 提供商已保存。",
     "{0} provider deleted.": "{0} 提供商已删除。",
     "{0} provider {1}.": "{0} 提供商已{1}。",

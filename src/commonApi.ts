@@ -8,10 +8,12 @@ import {
     Progress,
     CancellationToken,
 } from "vscode";
-import { MultiLLMModelItem } from "./types";
+import type { ApiMode, MultiLLMModelItem } from "./types";
 import { tryParseJSONObject } from "./utils";
+import { VersionManager } from "./versionManager";
 import type { InterceptedToolCall, StoredImage } from "./vision/types";
 import { ASK_IMAGE_TOOL_NAME, ASK_WITH_MULTI_IMAGE_TOOL_NAME } from "./vision/types";
+import { logger } from "./logger";
 
 /**
  * Token usage information extracted from streaming response usage chunk.
@@ -118,7 +120,7 @@ export abstract class CommonApi<TMessage, TRequestBody> {
     abstract convertMessages(
         messages: readonly LanguageModelChatRequestMessage[],
         modelConfig: { includeReasoningInRequest: boolean }
-    ): TMessage[];
+    ): Promise<TMessage[]>;
 
     /**
      * Construct request body for Specific api
@@ -436,13 +438,17 @@ export abstract class CommonApi<TMessage, TRequestBody> {
      */
     public static prepareHeaders(
         apiKey: string,
-        apiMode: string,
+        apiMode: ApiMode,
         customHeaders?: Record<string, string>,
         sessionId?: string
     ): Record<string, string> {
+        // Internal override for testing or contingency (e.g. if the API ever gates access by User-Agent again).
+        const customUserAgent = process.env.OPENCODEGO_USER_AGENT ?? "";
+        const userAgent = customUserAgent.trim() || VersionManager.getUserAgent();
+
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
-            "User-Agent": "multi-llm-copilot-provider/1.0.0",
+            "User-Agent": userAgent,
             "Accept": "*/*",
             "Accept-Encoding": "gzip, deflate, br, zstd",
         };
@@ -469,6 +475,12 @@ export abstract class CommonApi<TMessage, TRequestBody> {
                 headers[key] = value;
             }
         }
+
+        logger.debug("prepareHeaders", {
+            apiMode,
+            headersUsed: headers,
+            customHeadersProvided: customHeaders ? Object.keys(customHeaders) : [],
+        });
 
         return headers;
     }

@@ -3,6 +3,10 @@ import * as crypto from "crypto";
 import type { MultiLLMModelItem, RetryConfig } from "./types";
 import type { StoredImage } from "./vision/types";
 import { OpenAIFunctionToolDef } from "./openai/openaiTypes";
+import type { ResponsesFunctionToolDef } from "./openai/responsesTypes";
+import { CancellationToken } from "vscode";
+import { l10n } from "./localize";
+import { isZenFreeModelId } from "./catalogModels";
 
 /**
  * Provider ID of the OpenCode Go provider. Only this provider requires the
@@ -133,11 +137,29 @@ export function mapRole(message: vscode.LanguageModelChatRequestMessage): "user"
     return "system";
 }
 
+function resolveToolMode(options?: vscode.ProvideLanguageModelChatResponseOptions): string | undefined {
+    const officialToolMode = (options as unknown as { toolMode?: unknown })?.toolMode;
+    const toolModeEnum = (vscode as typeof vscode & {
+        LanguageModelChatToolMode?: { Auto?: unknown; Required?: unknown };
+    }).LanguageModelChatToolMode;
+
+    if (officialToolMode === toolModeEnum?.Required || officialToolMode === "required") {
+        return "required";
+    }
+    if (officialToolMode === toolModeEnum?.Auto || officialToolMode === "auto") {
+        return "auto";
+    }
+
+    const legacyToolMode = (options?.modelOptions as Record<string, unknown> | undefined)?.toolMode;
+    return typeof legacyToolMode === "string" ? legacyToolMode : undefined;
+}
+
 /**
  * Convert VS Code tool definitions to OpenAI function tool definitions.
  */
 export function convertToolsToOpenAI(
-    options?: vscode.ProvideLanguageModelChatResponseOptions
+    options?: vscode.ProvideLanguageModelChatResponseOptions,
+    modelId?: string
 ): { tools?: OpenAIFunctionToolDef[]; tool_choice?: string } {
     if (!options?.tools || options.tools.length === 0) {
         return {};
@@ -161,12 +183,11 @@ export function convertToolsToOpenAI(
     });
 
     // Determine tool_choice mode
-    const toolMode = (options?.modelOptions as Record<string, unknown> | undefined)
-        ?.toolMode as string | undefined;
+    const toolMode = resolveToolMode(options);
 
     let toolChoice: string | undefined;
     if (toolMode === "required") {
-        toolChoice = "required";
+        toolChoice = modelId && isZenFreeModelId(modelId) ? "auto" : "required";
     } else if (toolMode === "none") {
         toolChoice = "none";
     } else if (toolMode === "auto") {
@@ -174,6 +195,31 @@ export function convertToolsToOpenAI(
     }
 
     return { tools, tool_choice: toolChoice };
+}
+
+/** Convert an OpenAI Chat function definition to the flat Responses format. */
+export function convertOpenAIToolToResponses(tool: OpenAIFunctionToolDef): ResponsesFunctionToolDef {
+    return {
+        type: "function",
+        name: tool.function.name,
+        description: tool.function.description,
+        parameters: tool.function.parameters ?? { type: "object", properties: {} },
+        // VS Code tool schemas are not guaranteed to satisfy OpenAI strict-mode
+        // requirements (all properties required, additionalProperties=false).
+        strict: false,
+    };
+}
+
+/** Convert VS Code tool definitions to the flat OpenAI Responses format. */
+export function convertToolsToResponses(
+    options?: vscode.ProvideLanguageModelChatResponseOptions,
+    modelId?: string
+): { tools?: ResponsesFunctionToolDef[]; tool_choice?: string } {
+    const chatTools = convertToolsToOpenAI(options, modelId);
+    return {
+        tools: chatTools.tools?.map(convertOpenAIToolToResponses),
+        tool_choice: chatTools.tool_choice,
+    };
 }
 
 /**
@@ -194,6 +240,64 @@ export function createRetryConfig(): RetryConfig {
         maxIntervalMs: RETRY_MAX_INTERVAL_MS,
         statusCodes: [...RETRYABLE_STATUS_CODES, ...additionalStatusCodes],
     };
+}
+
+/**
+ * Read the user-configured inference base URL override (proxy).
+ *
+ * When set (via the `multiLLM.setInferenceBaseUrl` command or the
+ * `multiLLM.inferenceBaseUrl` setting), all inference requests — chat
+ * requests and Git commit message generation — are sent to this address
+ * instead of the provider's configured endpoint. Usage and model list
+ * requests keep using the official endpoint.
+ *
+ * @returns The trimmed override URL, or an empty string when not configured.
+ */
+export function getInferenceBaseUrlOverride(): string {
+    return vscode.workspace.getConfiguration().get<string>("multiLLM.inferenceBaseUrl", "").trim();
+}
+
+/**
+ * Validate a base URL for HTTP safety.
+ *
+ * Used both by the input box of the `multiLLM.setInferenceBaseUrl` command
+ * and by the request paths before dispatching (provider and Git commit
+ * generation). Rejects non-HTTP(S) URLs; for plain `http:` only localhost and
+ * private network addresses are allowed, remote endpoints must use HTTPS.
+ *
+ * @returns A localized error message when the URL is unacceptable, or
+ * `undefined` when it is valid.
+ */
+export function validateBaseUrl(baseUrl: string): string | undefined {
+    const trimmed = baseUrl.trim();
+    if (!trimmed) {
+        return l10n("Invalid base URL configuration.");
+    }
+
+    let url: URL;
+    try {
+        url = new URL(trimmed);
+    } catch {
+        return l10n("Invalid base URL configuration.");
+    }
+
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+        return l10n("Invalid base URL configuration.");
+    }
+
+    if (url.protocol === "http:") {
+        const host = url.hostname.toLowerCase();
+        const isLocal = host === "localhost" || host === "127.0.0.1"
+            || host === "::1" || host === "[::1]"
+            || host.startsWith("192.168.") || host.startsWith("10.")
+            || host === "0.0.0.0"
+            || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+        if (!isLocal) {
+            return l10n("Plain HTTP is only allowed for localhost or private network addresses. Use HTTPS for remote endpoints.");
+        }
+    }
+
+    return undefined;
 }
 
 /**
@@ -260,8 +364,105 @@ function isRetryableError(error: Error, retryableStatusCodes: number[]): boolean
 /**
  * Check if a mime type is an image type.
  */
-export function isImageMimeType(mimeType: string): boolean {
-    return mimeType.startsWith("image/");
+export function isImageMimeType(mimeType: unknown): boolean {
+    return typeof mimeType === "string" && mimeType.startsWith("image/");
+}
+
+/**
+ * VS Code MIME type for MCP tool result resource links.
+ * The data is a JSON string: { "uri": string, "underlyingMimeType"?: string }.
+ * @see https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/mcp/common/mcpTypes.ts
+ */
+export const RESOURCE_LINK_MIME = "application/vnd.code.resource-link";
+
+/**
+ * Check if a mime type is an MCP resource-link data part.
+ */
+export function isResourceLinkMimeType(mimeType: string): boolean {
+    return mimeType === RESOURCE_LINK_MIME;
+}
+
+/**
+ * Parsed contents of an MCP resource-link data part.
+ */
+export interface ParsedResourceLink {
+    uri: string;
+    underlyingMimeType?: string;
+}
+
+/**
+ * Parse the JSON payload of an MCP resource-link data part.
+ * Returns null when the payload is not a valid resource link.
+ */
+export function parseResourceLinkData(data: Uint8Array): ParsedResourceLink | null {
+    try {
+        const parsed: unknown = JSON.parse(new TextDecoder().decode(data));
+        if (parsed && typeof parsed === "object" && typeof (parsed as { uri?: unknown }).uri === "string") {
+            const uri = (parsed as { uri: string }).uri;
+            const underlying = (parsed as { underlyingMimeType?: unknown }).underlyingMimeType;
+            return {
+                uri,
+                ...(typeof underlying === "string" ? { underlyingMimeType: underlying } : {}),
+            };
+        }
+    } catch {
+        // ignore malformed payloads
+    }
+    return null;
+}
+
+const RESOURCE_LINK_EXT_MIME: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+};
+
+/**
+ * Guess an image MIME type from a resource URI path extension.
+ */
+export function guessImageMimeTypeFromUri(uri: string): string | undefined {
+    try {
+        const pathname = vscode.Uri.parse(uri).path.toLowerCase();
+        const ext = pathname.slice(pathname.lastIndexOf("."));
+        return RESOURCE_LINK_EXT_MIME[ext];
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * Resolve an MCP resource-link data part to actual image bytes when possible.
+ * VS Code registers a file system provider for `vscode-chat-response-resource://`
+ * URIs, so images can be read back while the chat session is alive.
+ * Returns null when the link is not an image or cannot be read.
+ */
+export async function resolveResourceLinkToImage(
+    data: Uint8Array
+): Promise<{ data: Uint8Array; mimeType: string } | null> {
+    const link = parseResourceLinkData(data);
+    if (!link) {
+        return null;
+    }
+
+    const mimeType = link.underlyingMimeType || guessImageMimeTypeFromUri(link.uri);
+    if (!mimeType || !isImageMimeType(mimeType)) {
+        return null;
+    }
+
+    try {
+        const uri = vscode.Uri.parse(link.uri);
+        const bytes = await vscode.workspace.fs.readFile(uri);
+        if (!bytes || bytes.length === 0) {
+            return null;
+        }
+        return { data: bytes, mimeType };
+    } catch {
+        // Resource may be gone (session disposed) or scheme not readable.
+        return null;
+    }
 }
 
 /**
@@ -389,4 +590,23 @@ export function tryParseJSONObject(
     } catch {
         return { ok: false };
     }
+}
+
+/**
+ * Resolve after the given delay, aborting early when the token is cancelled.
+ */
+export function delay(ms: number, token?: CancellationToken): Promise<void> {
+    return new Promise((resolve) => {
+        if (token?.isCancellationRequested) {
+            return resolve();
+        }
+        const timer = setTimeout(() => {
+            disposable?.dispose();
+            resolve();
+        }, ms);
+        const disposable = token?.onCancellationRequested(() => {
+            clearTimeout(timer);
+            resolve();
+        });
+    });
 }

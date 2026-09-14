@@ -11,11 +11,23 @@ import {
 } from "vscode";
 
 import * as path from "path";
-import * as crypto from "crypto";
 
-import type { ModelPreset, MultiLLMModelItem } from "./types";
+import type { ApiMode, ModelPreset, MultiLLMModelItem } from "./types";
 
-import { createRetryConfig, executeWithRetry, convertToolsToOpenAI, OPENCODE_GO_PROVIDER_ID, deriveSessionIdFromText } from "./utils";
+import {
+    createRetryConfig,
+    executeWithRetry,
+    convertToolsToOpenAI,
+    getInferenceBaseUrlOverride,
+    validateBaseUrl,
+} from "./utils";
+
+import {
+    isUpstreamProviderFailureError,
+    registerSessionId,
+    resolveSessionId,
+    rotateSessionId,
+} from "./sessionRouting";
 
 import { prepareLanguageModelChatInformation } from "./provideModel";
 import { getModelConfig, parseCompositeModelId, getProviderApiKey, storeProviderApiKey } from "./providers";
@@ -23,12 +35,16 @@ import { l10nFormat } from "./localize";
 import { countMessageTokens, textTokenLength } from "./provideToken";
 import { updateContextStatusBar, recordUsage, updateCumulativeTooltip, updateStatusBarWithApiPrompt } from "./statusBar";
 import { OpenaiApi } from "./openai/openaiApi";
+import { ResponsesApi } from "./openai/responsesApi";
+import type { ResponsesRequestBody } from "./openai/responsesTypes";
 import { AnthropicApi } from "./anthropic/anthropicApi";
 import type { AnthropicRequestBody } from "./anthropic/anthropicTypes";
 import { CommonApi, type StreamUsage } from "./commonApi";
 import { callVisionModel, callVisionModelMulti } from "./vision/imageProxy";
-import { ASK_IMAGE_TOOL_NAME, ASK_IMAGE_TOOL_DEF, ASK_WITH_MULTI_IMAGE_TOOL_NAME, ASK_WITH_MULTI_IMAGE_TOOL_DEF } from "./vision/types";
-import type { InterceptedToolCall, StoredImage } from "./vision/types";
+import { ASK_IMAGE_TOOL_DEF, ASK_WITH_MULTI_IMAGE_TOOL_NAME, ASK_WITH_MULTI_IMAGE_TOOL_DEF } from "./vision/types";
+import type { StoredImage } from "./vision/types";
+import { createVisionToolHistoryPart } from "./vision/historyPart";
+import type { VisionToolHistoryEntry } from "./vision/historyCodec";
 import { logger } from "./logger";
 import { l10n } from "./localize";
 
@@ -71,46 +87,6 @@ function getRequestedReasoningEffort(options: ProvideLanguageModelChatResponseOp
 
     const modelOptionsEffort = modelOptions?.reasoning_effort ?? modelOptions?.reasoningEffort;
     return typeof modelOptionsEffort === "string" ? modelOptionsEffort : undefined;
-}
-
-/**
- * Derive a stable per-conversation session ID for the `x-opencode-session` header.
- *
- * OpenCode Go requires a stable per-conversation ID on every inference request
- * (used server-side for routing and prompt-cache optimization; requests without
- * it error since 2026-09-05). VS Code does not expose a conversation identifier
- * to language model providers, so the ID is derived deterministically from the
- * target model ID plus the conversation's first user message text: chat clients
- * re-send the same history on every turn of a conversation, so the derived ID
- * stays stable across turns while differing between conversations.
- *
- * @param modelId The model ID the request targets (keeps sessions distinct per model).
- * @param messages The request messages from VS Code.
- * @returns A UUID-formatted session ID, or a random UUID when the conversation has no user text anchor (e.g. image-only requests).
- */
-function deriveOpencodeSessionId(
-    modelId: string,
-    messages: readonly LanguageModelChatRequestMessage[]
-): string {
-    for (const message of messages) {
-        if (message.role !== vscode.LanguageModelChatMessageRole.User) {
-            continue;
-        }
-        // Collect text parts only — binary data parts (images) are skipped so the
-        // hash stays cheap and the ID does not depend on image bytes.
-        const anchorText = message.content
-            .map((part) => {
-                if (typeof part === "string") return part;
-                if (part instanceof vscode.LanguageModelTextPart) return part.value;
-                return "";
-            })
-            .join("");
-        if (!anchorText.trim()) {
-            continue;
-        }
-        return deriveSessionIdFromText(modelId, anchorText);
-    }
-    return crypto.randomUUID();
 }
 
 /**
@@ -243,18 +219,23 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                 }
             }
 
-            // Determine API mode and base URL from model config
+            // Determine API mode and base URL from model config.
+            // A user-configured proxy base URL wins over the provider URL.
             const apiMode = um?.apiMode || "openai";
-            const baseUrl = um?.baseUrl;
-            if (!baseUrl || !baseUrl.startsWith("http")) {
-                throw new Error(l10n("Invalid base URL configuration."));
-            }
+            const baseUrlOverride = getInferenceBaseUrlOverride();
+            const baseUrl = baseUrlOverride || um?.baseUrl;
 
+            // Resolve the conversation's session ID early so it can be traced
+            // in request logs (see sessionRouting.ts).
+            const session = resolveSessionId(model.id, messages);
             logger.info("request.start", {
                 modelId: model.id,
                 messageCount: messages.length,
                 apiMode,
                 baseUrl,
+                baseUrlOverride: Boolean(baseUrlOverride),
+                sessionId: session.sessionId,
+                sessionRegistered: session.registered,
             });
 
             // Prepare model configuration
@@ -267,7 +248,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
             const enableThirdPartyIndicator = config.get<boolean>("multiLLM.enableThirdPartyTokenIndicator", true);
 
             // Calculate client-side token estimate
-            const estimatedInputTokens = await updateContextStatusBar(messages, options.tools, model, this.statusBarItem, modelConfig);
+            const estimatedInputTokens = await updateContextStatusBar(messages, options.tools, this.statusBarItem, modelConfig);
 
             // Apply delay between consecutive requests
             const modelDelay = um?.delay;
@@ -292,7 +273,11 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                 throw new Error(l10n("API key not found for this provider. Please set it in settings."));
             }
 
-            const BASE_URL = baseUrl;
+            const baseUrlError = validateBaseUrl(baseUrl ?? "");
+            if (baseUrlError) {
+                throw new Error(baseUrlError);
+            }
+            const BASE_URL: string = baseUrl!;
 
             // Retry config
             const retryConfig = createRetryConfig();
@@ -311,12 +296,20 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
 
             dispatchFetch = this._createFetchWithTimeout(requestTimeoutMs);
 
-            // Prepare headers. Only the OpenCode Go provider requires the
-            // `x-opencode-session` header on inference requests.
-            const sessionId = providerId === OPENCODE_GO_PROVIDER_ID
-                ? deriveOpencodeSessionId(model.id, messages)
-                : undefined;
-            const requestHeaders = CommonApi.prepareHeaders(modelApiKey, apiMode, um?.headers, sessionId);
+            // Prepare headers. The session ID comes from the registry when the
+            // re-sent history identifies a known conversation, otherwise a fresh
+            // UUID is used and registered once this turn's output is complete
+            // (see sessionRouting.ts).
+            const requestHeaders = CommonApi.prepareHeaders(modelApiKey, apiMode, um?.headers, session.sessionId);
+            const rotateSession = (): void => {
+                const previousSessionId = requestHeaders["x-opencode-session"];
+                requestHeaders["x-opencode-session"] = rotateSessionId(model.id, messages);
+                logger.warn("request.sessionRotated", {
+                    modelId: model.id,
+                    previousSessionId,
+                    newSessionId: requestHeaders["x-opencode-session"],
+                });
+            };
             logger.debug("request.headers", {
                 headers: logger.sanitizeHeaders(requestHeaders as Record<string, string>),
             });
@@ -330,10 +323,10 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     if (enableThirdPartyIndicator) {
                         recordUsage(usage);
                         updateCumulativeTooltip(this.statusBarItem);
-                        updateStatusBarWithApiPrompt(usage.promptTokens, model.maxInputTokens || 128000, this.statusBarItem);
+                        updateStatusBarWithApiPrompt(this.statusBarItem);
                     }
                 };
-                const anthropicMessages = anthropicApi.convertMessages(messages, modelConfig);
+                const anthropicMessages = await anthropicApi.convertMessages(messages, modelConfig);
 
                 let requestBody: AnthropicRequestBody = {
                     model: um?.id ?? model.id,
@@ -350,7 +343,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                 // Log the full request body for debugging
                 console.error("[MultiLLM] Anthropic request body:", JSON.stringify(requestBody, null, 2));
 
-                const response = await executeWithRetry(async () => {
+                const response = await this._sendWithSessionFallback(async () => executeWithRetry(async () => {
                     const res = await dispatchFetch(url, {
                         method: "POST",
                         headers: requestHeaders,
@@ -370,7 +363,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     }
 
                     return res;
-                }, retryConfig);
+                }, retryConfig), rotateSession);
 
                 if (!response.body) {
                     throw new Error("No response body from API");
@@ -384,6 +377,75 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     apiMode: "anthropic",
                     model: model,
                     um: um,
+                    messages: messages,
+                    modelApiKey: modelApiKey,
+                    baseUrl: BASE_URL,
+                    dispatchFetch: dispatchFetch,
+                    requestHeaders: requestHeaders,
+                    retryConfig: retryConfig,
+                    abortController: abortController,
+                    trackingProgress: trackingProgress,
+                    token: token,
+                    options: options,
+                });
+            } else if (apiMode === "openai-responses") {
+                // ── OpenAI Responses API mode ──
+                const responsesApi = new ResponsesApi(model.id);
+                responsesApi.onUsage = (usage) => {
+                    usageReportedDuringStream = true;
+                    reportNativeUsage(usage, progress);
+                    if (enableThirdPartyIndicator) {
+                        recordUsage(usage);
+                        updateCumulativeTooltip(this.statusBarItem);
+                        updateStatusBarWithApiPrompt(this.statusBarItem);
+                    }
+                };
+                const responsesInput = await responsesApi.convertMessages(messages, modelConfig);
+
+                let requestBody: ResponsesRequestBody = {
+                    model: um?.id ?? model.id,
+                    input: responsesInput,
+                    stream: true,
+                    store: false,
+                };
+                requestBody = responsesApi.prepareRequestBody(requestBody, um, options);
+
+                const url = `${BASE_URL.replace(/\/+$/, "")}/responses`;
+                logger.debug("request.body", { url, requestBody });
+                const response = await this._sendWithSessionFallback(async () => executeWithRetry(async () => {
+                    const res = await dispatchFetch(url, {
+                        method: "POST",
+                        headers: requestHeaders,
+                        body: JSON.stringify(requestBody),
+                        signal: abortController.signal,
+                    });
+
+                    if (!res.ok) {
+                        const errorText = await res.text();
+                        console.error("[MultiLLM] Responses API error response", errorText);
+                        if (errorText.includes("image is sensitive")) {
+                            throw new Error(`IMAGE_SENSITIVE: ${errorText}`);
+                        }
+                        throw new Error(
+                            `Responses API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}\nURL: ${url}`
+                        );
+                    }
+
+                    return res;
+                }, retryConfig), rotateSession);
+
+                if (!response.body) {
+                    throw new Error("No response body from Responses API");
+                }
+                await responsesApi.processStreamingResponse(response.body, trackingProgress, token);
+
+                clearTimeout(timeoutId);
+                await this._handleInterceptedToolCall({
+                    api: responsesApi,
+                    apiMode: "openai-responses",
+                    model: model,
+                    um: um,
+                    messages: messages,
                     modelApiKey: modelApiKey,
                     baseUrl: BASE_URL,
                     dispatchFetch: dispatchFetch,
@@ -403,10 +465,10 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     if (enableThirdPartyIndicator) {
                         recordUsage(usage);
                         updateCumulativeTooltip(this.statusBarItem);
-                        updateStatusBarWithApiPrompt(usage.promptTokens, model.maxInputTokens || 128000, this.statusBarItem);
+                        updateStatusBarWithApiPrompt(this.statusBarItem);
                     }
                 };
-                const openaiMessages = openaiApi.convertMessages(messages, modelConfig);
+                const openaiMessages = await openaiApi.convertMessages(messages, modelConfig);
 
                 let requestBody: Record<string, unknown> = {
                     model: um?.id ?? model.id,
@@ -419,7 +481,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
 
                 const url = `${BASE_URL.replace(/\/+$/, "")}/chat/completions`;
 
-                const response = await executeWithRetry(async () => {
+                const response = await this._sendWithSessionFallback(async () => executeWithRetry(async () => {
                     const res = await dispatchFetch(url, {
                         method: "POST",
                         headers: requestHeaders,
@@ -439,7 +501,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     }
 
                     return res;
-                }, retryConfig);
+                }, retryConfig), rotateSession);
 
                 if (!response.body) {
                     throw new Error("No response body from API");
@@ -454,6 +516,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     apiMode: "openai",
                     model: model,
                     um: um,
+                    messages: messages,
                     modelApiKey: modelApiKey,
                     baseUrl: BASE_URL,
                     dispatchFetch: dispatchFetch,
@@ -464,6 +527,15 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     token: token,
                     options: options,
                 });
+            }
+
+            // Persist the session ID for conversations that used a fresh UUID
+            // this turn (first turn, or registry miss after restart): keyed by
+            // model + first user text + this turn's output, which every later
+            // turn re-sends as history. Rotated sessions re-register inside
+            // rotateSessionId() and are skipped here.
+            if (!session.registered) {
+                registerSessionId(model.id, messages, collectedOutputText.join(""), requestHeaders["x-opencode-session"]);
             }
 
             // Fallback: client-side token estimate
@@ -539,13 +611,41 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
     }
 
     /**
+     * Send a request, retrying once with a rotated `x-opencode-session` when
+     * the failure is an upstream-provider error: session affinity can pin a
+     * conversation to a broken backend (#123), and a fresh session ID gets
+     * routed elsewhere. The rotated ID is persisted for later turns inside
+     * `rotateSessionId()`.
+     *
+     * @param send Dispatches the request (with its own retry policy); reads
+     *             the request headers at call time so rotation takes effect.
+     * @param rotateSession Replaces the session ID in the shared headers.
+     * @returns The successful response.
+     */
+    private async _sendWithSessionFallback(
+        send: () => Promise<Response>,
+        rotateSession: () => void
+    ): Promise<Response> {
+        try {
+            return await send();
+        } catch (err) {
+            if (!isUpstreamProviderFailureError(err)) {
+                throw err;
+            }
+            rotateSession();
+            return await send();
+        }
+    }
+
+    /**
      * Handle ask_image tool call interception with multi-round vision proxy.
      */
     private async _handleInterceptedToolCall(params: {
         api: CommonApi<any, any>;
-        apiMode: string;
+        apiMode: ApiMode;
         model: LanguageModelChatInformation;
         um: MultiLLMModelItem | undefined;
+        messages: readonly LanguageModelChatRequestMessage[];
         modelApiKey: string;
         baseUrl: string;
         dispatchFetch: typeof fetch;
@@ -564,8 +664,18 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
         if (!storedMessages || storedMessages.length === 0) { return; }
 
         const config = vscode.workspace.getConfiguration();
-        const visionModelId = config.get<string>("multiLLM.visionProxyModel", "qwen3.6-plus");
+        const visionModelId = config.get<string>("multiLLM.visionProxyModel", "qwen-plus-latest");
         const maxRounds = config.get<number>("multiLLM.visionMaxRounds", 5);
+        const rotateSession = (): void => {
+            const previousSessionId = params.requestHeaders["x-opencode-session"];
+            params.requestHeaders["x-opencode-session"] = rotateSessionId(params.model.id, params.messages);
+            logger.warn("request.sessionRotated", {
+                modelId: params.model.id,
+                visionRound: true,
+                previousSessionId,
+                newSessionId: params.requestHeaders["x-opencode-session"],
+            });
+        };
 
         let currentMessages: any[] = [...storedMessages];
 
@@ -653,6 +763,23 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                 new vscode.LanguageModelThinkingPart("", textBlockId) as unknown as LanguageModelResponsePart
             );
 
+            // Persist the completed internal tool exchange in the response
+            // stream. VS Code can carry this DataPart into the next request;
+            // the API converters then rebuild the standard tool messages.
+            const previousReasoning = params.apiMode === "openai"
+                ? ((api as any)._capturedReasoningContent as string | undefined)
+                : undefined;
+            const historyEntry: VisionToolHistoryEntry = {
+                id: intercepted.id,
+                name: intercepted.name as VisionToolHistoryEntry["name"],
+                args: intercepted.args,
+                result: description,
+                ...(previousReasoning !== undefined ? { reasoningContent: previousReasoning } : {}),
+            };
+            params.trackingProgress.report(
+                createVisionToolHistoryPart(historyEntry) as unknown as LanguageModelResponsePart
+            );
+
             if (params.token.isCancellationRequested) { break; }
 
             const roundAbortController = new AbortController();
@@ -711,7 +838,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     }
 
                     const anthropicToolList: Array<{ name: string; description?: string; input_schema?: object }> = [];
-                    const toolConfig = convertToolsToOpenAI(params.options);
+                    const toolConfig = convertToolsToOpenAI(params.options, params.um?.id ?? params.model.id);
                     if (toolConfig.tools) {
                         for (const tool of toolConfig.tools) {
                             anthropicToolList.push({
@@ -748,7 +875,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                         ? `${normalizedUrl}/messages`
                         : `${normalizedUrl}/v1/messages`;
 
-                    const response = await executeWithRetry(async () => {
+                    const response = await this._sendWithSessionFallback(async () => executeWithRetry(async () => {
                         const res = await params.dispatchFetch(url, {
                             method: "POST",
                             headers: params.requestHeaders,
@@ -760,10 +887,53 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                             throw new Error(`API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}`);
                         }
                         return res;
-                    }, params.retryConfig);
+                    }, params.retryConfig), rotateSession);
 
                     if (response.body) {
                         await api.processStreamingResponse(response.body, params.trackingProgress, params.token);
+                    }
+                } else if (params.apiMode === "openai-responses") {
+                    // Responses format: preserve encrypted reasoning items, then append
+                    // the intercepted function call and its local vision result.
+                    const responsesApi = api as ResponsesApi;
+                    currentMessages.push(...responsesApi.takeCapturedReasoningItems());
+                    currentMessages.push({
+                        type: "function_call" as const,
+                        call_id: intercepted.id,
+                        name: intercepted.name,
+                        arguments: JSON.stringify(intercepted.args),
+                    });
+                    currentMessages.push({
+                        type: "function_call_output" as const,
+                        call_id: intercepted.id,
+                        output: description,
+                    });
+
+                    let body: ResponsesRequestBody = {
+                        model: params.um?.id ?? params.model.id,
+                        input: currentMessages,
+                        stream: true,
+                        store: false,
+                    };
+                    body = responsesApi.prepareRequestBody(body, params.um, params.options);
+
+                    const url = `${params.baseUrl.replace(/\/+$/, "")}/responses`;
+                    const response = await this._sendWithSessionFallback(async () => executeWithRetry(async () => {
+                        const res = await params.dispatchFetch(url, {
+                            method: "POST",
+                            headers: params.requestHeaders,
+                            body: JSON.stringify(body),
+                            signal: roundAbortController.signal,
+                        });
+                        if (!res.ok) {
+                            const errorText = await res.text();
+                            throw new Error(`Responses API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}`);
+                        }
+                        return res;
+                    }, params.retryConfig), rotateSession);
+
+                    if (response.body) {
+                        await responsesApi.processStreamingResponse(response.body, params.trackingProgress, params.token);
                     }
                 } else {
                     // OpenAI format: append assistant tool_call + tool result
@@ -771,7 +941,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     // DeepSeek thinking mode requires the original reasoning_content to be echoed back
                     // verbatim on every assistant message that follows a tool call — hardcoded strings
                     // or empty values cause the model to break (infinite tool loops or 400 errors).
-                    const prevReasoning = (api as any)._capturedReasoningContent ?? "";
+                    const prevReasoning = previousReasoning ?? "";
                     (api as any)._capturedReasoningContent = "";
                     currentMessages.push({
                         role: "assistant" as const,
@@ -818,7 +988,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     }
 
                     const openaiToolList: any[] = [];
-                    const toolConfig = convertToolsToOpenAI(params.options);
+                    const toolConfig = convertToolsToOpenAI(params.options, params.um?.id ?? params.model.id);
                     if (toolConfig.tools) { openaiToolList.push(...toolConfig.tools); }
                     if (hasLocalImages) {
                         openaiToolList.push(ASK_IMAGE_TOOL_DEF);
@@ -835,7 +1005,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     }
 
                     const url = `${params.baseUrl.replace(/\/+$/, "")}/chat/completions`;
-                    const response = await executeWithRetry(async () => {
+                    const response = await this._sendWithSessionFallback(async () => executeWithRetry(async () => {
                         const res = await params.dispatchFetch(url, {
                             method: "POST",
                             headers: params.requestHeaders,
@@ -847,7 +1017,7 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                             throw new Error(`API error: [${res.status}] ${res.statusText}${errorText ? `\n${errorText}` : ""}`);
                         }
                         return res;
-                    }, params.retryConfig);
+                    }, params.retryConfig), rotateSession);
 
                     if (response.body) {
                         await api.processStreamingResponse(response.body, params.trackingProgress, params.token);

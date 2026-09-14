@@ -37,6 +37,11 @@ jobs:
       - name: Run postinstall script (copy tokenizer)
         run: node scripts/copy-tokenizer.js
 
+      # Refresh the hardcoded catalog snapshot before building; on failure the
+      # existing snapshot is kept and the build continues.
+      - name: Refresh hardcoded catalog snapshot
+        run: node scripts/update-hardcoded-catalog.mjs
+
       # Determine version source: manual input > tag > none
       - name: Resolve version
         id: ver

@@ -83,6 +83,21 @@
 				"category": "%commandCategory%",
 				"title": "%command.rescanModels%",
 				"icon": "$(refresh)"
+			},
+			{
+				"command": "multiLLM.resetSessionRouting",
+				"category": "%commandCategory%",
+				"title": "%command.resetSessionRouting%"
+			},
+			{
+				"command": "multiLLM.setInferenceBaseUrl",
+				"category": "%commandCategory%",
+				"title": "%command.setInferenceBaseUrl%"
+			},
+			{
+				"command": "multiLLM.checkUsage",
+				"category": "%commandCategory%",
+				"title": "%command.checkUsage%"
 			}
 		],
 		"menus": {
@@ -90,7 +105,7 @@
 				{
 					"command": "multiLLM.generateGitCommitMessage",
 					"group": "navigation",
-					"when": "config.git.enabled && scmProvider == git && !multiLLM.isGeneratingCommit"
+					"when": "config.multiLLM.enableCommitGeneration && config.git.enabled && scmProvider == git && !multiLLM.isGeneratingCommit"
 				},
 				{
 					"command": "multiLLM.abortGitCommitMessage",
@@ -101,7 +116,7 @@
 			"commandPalette": [
 				{
 					"command": "multiLLM.generateGitCommitMessage",
-					"when": "config.git.enabled && !multiLLM.isGeneratingCommit"
+					"when": "config.multiLLM.enableCommitGeneration && config.git.enabled && !multiLLM.isGeneratingCommit"
 				},
 				{
 					"command": "multiLLM.abortGitCommitMessage",
@@ -468,7 +483,7 @@
 				},
 				"multiLLM.visionProxyModel": {
 					"type": "string",
-					"default": "opencode-go:qwen3.6-plus",
+					"default": "opencode-go:qwen-plus-latest",
 					"description": "%config.visionProxyModel.desc%"
 				},
 				"multiLLM.visionProxyThinking": {
@@ -476,10 +491,67 @@
 					"default": false,
 					"description": "%config.visionProxyThinking.desc%"
 				},
+				"multiLLM.visionMaxRounds": {
+					"type": "number",
+					"default": 5,
+					"minimum": 1,
+					"maximum": 20,
+					"markdownDescription": "%config.visionMaxRounds.desc%"
+				},
 				"multiLLM.enableThirdPartyTokenIndicator": {
 					"type": "boolean",
 					"default": true,
 					"description": "%config.enableThirdPartyTokenIndicator.desc%"
+				},
+				"multiLLM.showUsageInTooltip": {
+					"type": "boolean",
+					"default": true,
+					"description": "%config.showUsageInTooltip.desc%"
+				},
+				"multiLLM.usageRefreshInterval": {
+					"type": "number",
+					"default": 5,
+					"minimum": 1,
+					"maximum": 60,
+					"markdownDescription": "%config.usageRefreshInterval.desc%"
+				},
+				"multiLLM.enableCommitGeneration": {
+					"type": "boolean",
+					"default": true,
+					"description": "%config.enableCommitGeneration.desc%"
+				},
+				"multiLLM.showDeprecatedModels": {
+					"type": "boolean",
+					"default": false,
+					"description": "%config.showDeprecatedModels.desc%"
+				},
+				"multiLLM.modelsDevUpdateInterval": {
+					"type": "number",
+					"default": 60000,
+					"minimum": 30000,
+					"description": "%config.modelsDevUpdateInterval.desc%"
+				},
+				"multiLLM.modelsDevMirrorUrl": {
+					"type": "string",
+					"default": "https://modelsdev-mirror.onesoft.top/catalog.json",
+					"markdownDescription": "%config.modelsDevMirrorUrl.desc%"
+				},
+				"multiLLM.modelsDevMirrorToken": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "%config.modelsDevMirrorToken.desc%"
+				},
+				"multiLLM.inferenceBaseUrl": {
+					"type": "string",
+					"default": "",
+					"scope": "machine",
+					"markdownDescription": "%config.inferenceBaseUrl.desc%"
+				},
+				"multiLLM.readFileLines": {
+					"type": "number",
+					"default": 0,
+					"minimum": 0,
+					"markdownDescription": "%config.readFileLines.desc%"
 				}
 			}
 		}
@@ -488,6 +560,11 @@
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
 		"compile": "tsc -p ./",
+		"test": "npm run compile && node scripts/test-api-mode.mjs && node scripts/test-responses-api.mjs && node scripts/test-vision-history.mjs && node scripts/test-anthropic-tool-result-merge.mjs && node scripts/test-base-url.mjs",
+		"test:api-mode": "npm run compile && node scripts/test-api-mode.mjs",
+		"test:responses-api": "npm run compile && node scripts/test-responses-api.mjs",
+		"test:vision-history": "npm run compile && node scripts/test-vision-history.mjs",
+		"test:base-url": "npm run compile && node scripts/test-base-url.mjs",
 		"lint": "eslint",
 		"watch": "tsc -watch -p ./",
 		"build": "npm run compile && npx @vscode/vsce package -o multillm-copilot.vsix",

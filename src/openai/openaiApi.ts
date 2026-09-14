@@ -22,7 +22,6 @@ import {
     isImageMimeType,
     createDataUrl,
     isToolResultPart,
-    collectToolResultText,
     convertToolsToOpenAI,
     mapRole,
     storeDataUriImages,
@@ -30,12 +29,17 @@ import {
     modelSupportsTemperature,
     OPENCODE_GO_PROVIDER_ID,
     deriveSessionIdFromText,
+    isResourceLinkMimeType,
+    parseResourceLinkData,
+    resolveResourceLinkToImage,
 } from "../utils";
 
 import { CommonApi, StreamUsage } from "../commonApi";
 import { logger } from "../logger";
 import type { StoredImage } from "../vision/types";
-import { ASK_IMAGE_TOOL_NAME, ASK_IMAGE_TOOL_DEF, ASK_WITH_MULTI_IMAGE_TOOL_NAME, ASK_WITH_MULTI_IMAGE_TOOL_DEF } from "../vision/types";
+import { ASK_IMAGE_TOOL_DEF, ASK_WITH_MULTI_IMAGE_TOOL_DEF } from "../vision/types";
+import { parseVisionToolHistoryPart } from "../vision/historyPart";
+import { toOpenAIVisionToolMessages, type VisionToolHistoryEntry } from "../vision/historyCodec";
 
 export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unknown>> {
     constructor(modelId: string) {
@@ -52,10 +56,10 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
      * For non-vision models, images are replaced with text references and stored
      * in instance-local _localImages for the ask_image tool.
      */
-    convertMessages(
+    async convertMessages(
         messages: readonly LanguageModelChatRequestMessage[],
         modelConfig: { includeReasoningInRequest: boolean; vision?: boolean }
-    ): OpenAIChatMessage[] {
+    ): Promise<OpenAIChatMessage[]> {
         const modelSupportsVision = modelConfig.vision !== false;
         const out: OpenAIChatMessage[] = [];
         let imageIndex = 0;
@@ -85,6 +89,14 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                                 } else if (inner instanceof vscode.LanguageModelTextPart) {
                                     // Scan text for base64 data URI images
                                     storeDataUriImages(inner.value, imagesToStore);
+                                } else if (inner instanceof vscode.LanguageModelDataPart && isResourceLinkMimeType(inner.mimeType)) {
+                                    // MCP tools may return images as resource links
+                                    // (application/vnd.code.resource-link); resolve them
+                                    // to actual image bytes for the ask_image proxy.
+                                    const stored = await resolveResourceLinkToImage(inner.data);
+                                    if (stored) {
+                                        imagesToStore.push(stored);
+                                    }
                                 }
                             }
                         }
@@ -106,11 +118,15 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
             const textParts: string[] = [];
             const imageParts: vscode.LanguageModelDataPart[] = [];
             const toolCalls: OpenAIToolCall[] = [];
-            const toolResults: { callId: string; content: string }[] = [];
+            const toolResults: { callId: string; content: string | ChatMessageContent[] }[] = [];
             const reasoningParts: string[] = [];
+            const visionToolHistory: VisionToolHistoryEntry[] = [];
 
             for (const part of m.content ?? []) {
-                if (part instanceof vscode.LanguageModelTextPart) {
+                const historyEntry = parseVisionToolHistoryPart(part);
+                if (historyEntry) {
+                    visionToolHistory.push(historyEntry);
+                } else if (part instanceof vscode.LanguageModelTextPart) {
                     if (modelSupportsVision) {
                         textParts.push(part.value);
                     } else {
@@ -141,6 +157,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                     const callId = (part as { callId?: string }).callId ?? "";
                     const toolContent = (part as { content?: ReadonlyArray<unknown> }).content;
                     const toolTexts: string[] = [];
+                    const toolImages: ChatMessageContent[] = [];
                     if (toolContent) {
                         for (const inner of toolContent) {
                             if (inner instanceof vscode.LanguageModelTextPart) {
@@ -151,13 +168,60 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                                     imageIndex += result.count;
                                     toolTexts.push(result.text);
                                 }
-                            } else if (!modelSupportsVision && inner instanceof vscode.LanguageModelDataPart && isImageMimeType(inner.mimeType)) {
-                                toolTexts.push(`\n[Image data from tool call (imageIndex=${imageIndex}). I am a text-only model and CANNOT see images directly. I MUST call the ask_image tool to learn about it.\n\nRecommended strategy:\n1. First call ask_image for a brief description to get an overview of the image.\n2. Then call ask_image again with specific questions about details you need (e.g., colors, text content, UI elements, error messages, or any other visible information).\n]`);
-                                imageIndex++;
+                            } else if (inner instanceof vscode.LanguageModelDataPart && isImageMimeType(inner.mimeType)) {
+                                if (modelSupportsVision) {
+                                    // Vision models receive the actual image content
+                                    // (e.g. the built-in view_image tool result).
+                                    toolImages.push({
+                                        type: "image_url",
+                                        image_url: { url: createDataUrl(inner) },
+                                    });
+                                } else {
+                                    toolTexts.push(`\n[Image data from tool call (imageIndex=${imageIndex}). I am a text-only model and CANNOT see images directly. I MUST call the ask_image tool to learn about it.\n\nRecommended strategy:\n1. First call ask_image for a brief description to get an overview of the image.\n2. Then call ask_image again with specific questions about details you need (e.g., colors, text content, UI elements, error messages, or any other visible information).\n]`);
+                                    imageIndex++;
+                                }
+                            } else if (inner instanceof vscode.LanguageModelDataPart && isResourceLinkMimeType(inner.mimeType)) {
+                                // MCP tools may return images as resource links
+                                // (application/vnd.code.resource-link) instead of raw
+                                // image data; resolve the link and pass the image through.
+                                const stored = await resolveResourceLinkToImage(inner.data);
+                                if (stored) {
+                                    if (modelSupportsVision) {
+                                        toolImages.push({
+                                            type: "image_url",
+                                            image_url: {
+                                                url: createDataUrl(
+                                                    new vscode.LanguageModelDataPart(stored.data, stored.mimeType)
+                                                ),
+                                            },
+                                        });
+                                    } else {
+                                        toolTexts.push(`\n[Image data from tool call (imageIndex=${imageIndex}). I am a text-only model and CANNOT see images directly. I MUST call the ask_image tool to learn about it.\n\nRecommended strategy:\n1. First call ask_image for a brief description to get an overview of the image.\n2. Then call ask_image again with specific questions about details you need (e.g., colors, text content, UI elements, error messages, or any other visible information).\n]`);
+                                        imageIndex++;
+                                    }
+                                } else {
+                                    const link = parseResourceLinkData(inner.data);
+                                    toolTexts.push(
+                                        link
+                                            ? `\n[Tool returned an unresolvable resource link: ${link.uri}]`
+                                            : ""
+                                    );
+                                }
                             }
                         }
                     }
-                    const content = toolTexts.join("\n").trim();
+                    const joinedText = toolTexts.join("\n").trim();
+                    let content: string | ChatMessageContent[];
+                    if (toolImages.length > 0) {
+                        const parts: ChatMessageContent[] = [];
+                        if (joinedText) {
+                            parts.push({ type: "text", text: joinedText });
+                        }
+                        parts.push(...toolImages);
+                        content = parts;
+                    } else {
+                        content = joinedText;
+                    }
                     toolResults.push({ callId, content });
                 } else if (part instanceof vscode.LanguageModelThinkingPart) {
                     const content = Array.isArray(part.value) ? part.value.join("") : part.value;
@@ -167,6 +231,14 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 
             const joinedText = textParts.join("").trim();
             const joinedThinking = reasoningParts.join("").trim();
+
+            // Persisted ask_image calls are restored as ordinary API messages.
+            // Put them before this message's normal content so that a DataPart
+            // appended after the previous assistant text still forms the valid
+            // sequence: assistant tool_call → tool result → assistant text.
+            for (const entry of visionToolHistory) {
+                out.push(...toOpenAIVisionToolMessages(entry));
+            }
 
             // process assistant message
             if (role === "assistant") {
@@ -178,10 +250,12 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
                     assistantMessage.content = joinedText;
                 }
 
-                // Always set reasoning_content when includeReasoningInRequest is true
-                // and reasoning parts exist — even if empty string, DeepSeek requires
-                // round-tripping for context continuity across conversation turns.
-                if (modelConfig.includeReasoningInRequest && reasoningParts.length > 0) {
+                // Always set reasoning_content when includeReasoningInRequest is true and
+                // the message carries reasoning parts OR tool calls — DeepSeek requires the
+                // field to be passed back on every assistant message that follows a tool
+                // call, even when the model produced no reasoning in that turn (empty string
+                // satisfies the presence check; omitting the field triggers a 400).
+                if (modelConfig.includeReasoningInRequest && (reasoningParts.length > 0 || toolCalls.length > 0)) {
                     assistantMessage.reasoning_content = joinedThinking;
                 }
 
@@ -314,7 +388,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
         }
 
         // tools
-        const toolConfig = convertToolsToOpenAI(options);
+        const toolConfig = convertToolsToOpenAI(options, um?.id ?? this._modelId);
         const toolsList: any[] = [];
         if (toolConfig.tools) {
             toolsList.push(...toolConfig.tools);
@@ -346,9 +420,20 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
         if (um?.presence_penalty !== undefined) { rb.presence_penalty = um.presence_penalty; }
         if (um?.repetition_penalty !== undefined) { rb.repetition_penalty = um.repetition_penalty; }
 
-        // Extra body parameters
+        // Extra body parameters (filter reserved keys with warning)
+        const OPENAI_RESERVED_EXTRA_KEYS = new Set([
+            "model", "messages", "stream", "temperature", "top_p",
+            "max_tokens", "max_completion_tokens", "tools", "tool_choice", "stop",
+            "reasoning_effort", "thinking", "top_k", "min_p",
+            "frequency_penalty", "presence_penalty", "repetition_penalty",
+            "stream_options", "reasoning",
+        ]);
         if (um?.extra && typeof um.extra === "object") {
             for (const [key, value] of Object.entries(um.extra)) {
+                if (OPENAI_RESERVED_EXTRA_KEYS.has(key)) {
+                    logger.warn("extra.conflict", { key, file: "openaiApi" });
+                    continue;
+                }
                 if (value !== undefined) {
                     rb[key] = value;
                 }

@@ -13,17 +13,21 @@ import type {
 	AnthropicMessage,
 	AnthropicRequestBody,
 	AnthropicContentBlock,
+	AnthropicImageBlock,
+	AnthropicTextBlock,
 	AnthropicToolUseBlock,
 	AnthropicToolResultBlock,
 	AnthropicStreamChunk,
 } from "./anthropicTypes";
 
-import { isImageMimeType, isToolResultPart, collectToolResultText, convertToolsToOpenAI, mapRole, storeDataUriImages, replaceDataUriImages, modelSupportsTemperature, OPENCODE_GO_PROVIDER_ID, deriveSessionIdFromText } from "../utils";
+import { isImageMimeType, isToolResultPart, convertToolsToOpenAI, mapRole, storeDataUriImages, replaceDataUriImages, modelSupportsTemperature, OPENCODE_GO_PROVIDER_ID, deriveSessionIdFromText, isResourceLinkMimeType, parseResourceLinkData, resolveResourceLinkToImage } from "../utils";
 
 import { CommonApi } from "../commonApi";
 import { logger } from "../logger";
 import type { StoredImage } from "../vision/types";
-import { ASK_IMAGE_TOOL_NAME, ASK_IMAGE_TOOL_DEF, ASK_WITH_MULTI_IMAGE_TOOL_NAME, ASK_WITH_MULTI_IMAGE_TOOL_DEF } from "../vision/types";
+import { ASK_IMAGE_TOOL_DEF, ASK_WITH_MULTI_IMAGE_TOOL_DEF } from "../vision/types";
+import { parseVisionToolHistoryPart } from "../vision/historyPart";
+import { toAnthropicVisionToolMessages, type VisionToolHistoryEntry } from "../vision/historyCodec";
 
 export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBody> {
 	constructor(modelId: string) {
@@ -42,10 +46,10 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 	 * @param modelConfig model configuration that may affect message conversion.
 	 * @returns Anthropic-compatible messages array.
 	 */
-	convertMessages(
+	async convertMessages(
 		messages: readonly LanguageModelChatRequestMessage[],
 		modelConfig: { includeReasoningInRequest: boolean; vision?: boolean }
-	): AnthropicMessage[] {
+	): Promise<AnthropicMessage[]> {
 		const modelSupportsVision = modelConfig.vision !== false;
 		const out: AnthropicMessage[] = [];
 		let imageIndex = 0;
@@ -91,6 +95,25 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 			}
 		}
 
+		// Anthropic protocol requires all tool_result blocks answering one
+		// assistant tool_use message to be sent in a SINGLE user message.
+		// VS Code may deliver each tool result as a separate message, so
+		// buffer consecutive tool-result-only messages and flush them as
+		// one user message to avoid 400 "tool_use ids were found without
+		// tool_result blocks immediately after" errors.
+		const pendingToolResults: AnthropicToolResultBlock[] = [];
+		const flushPendingToolResults = (): void => {
+			if (pendingToolResults.length > 0) {
+				if (pendingToolResults.length > 1) {
+					logger.debug("anthropic.tool-results.merged", {
+						modelId: this._modelId,
+						mergedResults: pendingToolResults.length,
+					});
+				}
+				out.push({ role: "user", content: pendingToolResults.splice(0) });
+			}
+		};
+
 		for (const m of messages) {
 			const role = mapRole(m);
 			const textParts: string[] = [];
@@ -98,9 +121,13 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 			const toolCalls: AnthropicToolUseBlock[] = [];
 			const toolResults: AnthropicToolResultBlock[] = [];
 			const thinkingParts: string[] = [];
+			const visionToolHistory: VisionToolHistoryEntry[] = [];
 
 			for (const part of m.content ?? []) {
-				if (part instanceof vscode.LanguageModelTextPart) {
+				const historyEntry = parseVisionToolHistoryPart(part);
+				if (historyEntry) {
+					visionToolHistory.push(historyEntry);
+				} else if (part instanceof vscode.LanguageModelTextPart) {
 					if (modelSupportsVision) {
 						textParts.push(part.value);
 					} else {
@@ -122,6 +149,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 					const callId = (part as { callId?: string }).callId ?? "";
 					const toolContent = (part as { content?: ReadonlyArray<unknown> }).content;
 					const toolTexts: string[] = [];
+					const toolImages: AnthropicImageBlock[] = [];
 					if (toolContent) {
 						for (const inner of toolContent) {
 							if (inner instanceof vscode.LanguageModelTextPart) {
@@ -132,13 +160,64 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 									imageIndex += result.count;
 									toolTexts.push(result.text);
 								}
-							} else if (!modelSupportsVision && inner instanceof vscode.LanguageModelDataPart && isImageMimeType(inner.mimeType)) {
-								toolTexts.push(`\n[Image data from tool call (imageIndex=${imageIndex}). I am a text-only model and CANNOT see images directly. I MUST call the ask_image tool to learn about it.\n\nRecommended strategy:\n1. First call ask_image for a brief description to get an overview of the image.\n2. Then call ask_image again with specific questions about details you need (e.g., colors, text content, UI elements, error messages, or any other visible information).\n]`);
-								imageIndex++;
+							} else if (inner instanceof vscode.LanguageModelDataPart && isImageMimeType(inner.mimeType)) {
+								if (modelSupportsVision) {
+									// Vision models receive the actual image content
+									// (e.g. the built-in view_image tool result).
+									toolImages.push({
+										type: "image",
+										source: {
+											type: "base64",
+											media_type: inner.mimeType,
+											data: Buffer.from(inner.data).toString("base64"),
+										},
+									});
+								} else {
+									toolTexts.push(`\n[Image data from tool call (imageIndex=${imageIndex}). I am a text-only model and CANNOT see images directly. I MUST call the ask_image tool to learn about it.\n\nRecommended strategy:\n1. First call ask_image for a brief description to get an overview of the image.\n2. Then call ask_image again with specific questions about details you need (e.g., colors, text content, UI elements, error messages, or any other visible information).\n]`);
+									imageIndex++;
+								}
+							} else if (inner instanceof vscode.LanguageModelDataPart && isResourceLinkMimeType(inner.mimeType)) {
+								// MCP tools may return images as resource links
+								// (application/vnd.code.resource-link) instead of raw
+								// image data; resolve the link and pass the image through.
+								const stored = await resolveResourceLinkToImage(inner.data);
+								if (stored) {
+									if (modelSupportsVision) {
+										toolImages.push({
+											type: "image",
+											source: {
+												type: "base64",
+												media_type: stored.mimeType,
+												data: Buffer.from(stored.data).toString("base64"),
+											},
+										});
+									} else {
+										toolTexts.push(`\n[Image data from tool call (imageIndex=${imageIndex}). I am a text-only model and CANNOT see images directly. I MUST call the ask_image tool to learn about it.\n\nRecommended strategy:\n1. First call ask_image for a brief description to get an overview of the image.\n2. Then call ask_image again with specific questions about details you need (e.g., colors, text content, UI elements, error messages, or any other visible information).\n]`);
+										imageIndex++;
+									}
+								} else {
+									const link = parseResourceLinkData(inner.data);
+									toolTexts.push(
+										link
+											? `\n[Tool returned an unresolvable resource link: ${link.uri}]`
+											: ""
+									);
+								}
 							}
 						}
 					}
-					const content = toolTexts.join("\n").trim();
+					const joinedText = toolTexts.join("\n").trim();
+					let content: string | (AnthropicTextBlock | AnthropicImageBlock)[];
+					if (toolImages.length > 0) {
+						const blocks: (AnthropicTextBlock | AnthropicImageBlock)[] = [];
+						if (joinedText) {
+							blocks.push({ type: "text", text: joinedText });
+						}
+						blocks.push(...toolImages);
+						content = blocks;
+					} else {
+						content = joinedText;
+					}
 					toolResults.push({
 						type: "tool_result",
 						tool_use_id: callId,
@@ -153,6 +232,12 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 			const joinedText = textParts.join("").trim();
 			const joinedThinking = thinkingParts.join("").trim();
 
+			// Restore persisted vision calls before the normal content of this
+			// message, preserving assistant tool_use → user tool_result order.
+			for (const entry of visionToolHistory) {
+				out.push(...toAnthropicVisionToolMessages(entry));
+			}
+
 			// Handle system messages separately (Anthropic uses top-level system field)
 			if (role === "system") {
 				if (joinedText) {
@@ -160,6 +245,22 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 				}
 				continue;
 			}
+
+			// Buffer tool-result-only user messages so consecutive results are
+			// merged into a single user message (Anthropic protocol requirement).
+			const isPureToolResultMessage =
+				role === "user" &&
+				toolResults.length > 0 &&
+				joinedText === "" &&
+				imageParts.length === 0 &&
+				visionToolHistory.length === 0;
+			if (isPureToolResultMessage) {
+				pendingToolResults.push(...toolResults);
+				continue;
+			}
+
+			// Flush buffered tool results before emitting any other message type
+			flushPendingToolResults();
 
 			// Build content blocks for user/assistant messages
 			const contentBlocks: AnthropicContentBlock[] = [];
@@ -232,6 +333,9 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 			}
 		}
 
+		// Flush any tool results still buffered at the end of the message list
+		flushPendingToolResults();
+
 		this._originalApiMessages = out as any[];
 		return out;
 	}
@@ -283,7 +387,7 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 		}
 
 		// Add tools configuration
-		const toolConfig = convertToolsToOpenAI(options);
+		const toolConfig = convertToolsToOpenAI(options, um?.id ?? this._modelId);
 		const anthropicToolList: Array<{ name: string; description?: string; input_schema?: object }> = [];
 		if (toolConfig.tools) {
 			for (const tool of toolConfig.tools) {
@@ -331,10 +435,18 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 			}
 		}
 
-		// Process extra configuration parameters
+		// Process extra configuration parameters (filter reserved keys with warning)
+		const ANTHROPIC_RESERVED_EXTRA_KEYS = new Set([
+			"model", "messages", "stream", "max_tokens", "system",
+			"temperature", "top_p", "top_k", "tools", "tool_choice",
+			"thinking", "stop_sequences",
+		]);
 		if (um?.extra && typeof um.extra === "object") {
-			// Add all extra parameters directly to the request body
 			for (const [key, value] of Object.entries(um.extra)) {
+				if (ANTHROPIC_RESERVED_EXTRA_KEYS.has(key)) {
+					logger.warn("extra.conflict", { key, file: "anthropicApi" });
+					continue;
+				}
 				if (value !== undefined) {
 					(rb as unknown as Record<string, unknown>)[key] = value;
 				}

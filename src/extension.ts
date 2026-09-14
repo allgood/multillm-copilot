@@ -1,24 +1,33 @@
 import * as vscode from "vscode";
 import { MultiLLMChatModelProvider } from "./provider";
-import { initStatusBar } from "./statusBar";
+import { initStatusBar, refreshGoUsageNow } from "./statusBar";
+import { formatUsageSummary, getUsageFetchStatus } from "./goUsage";
 import { logger } from "./logger";
 import { l10n, l10nFormat } from "./localize";
 import type { ModelPreset } from "./types";
+import { VersionManager } from "./versionManager";
 import { abortCommitGeneration, generateCommitMsg } from "./gitCommit/commitMessageGenerator";
 import { TokenizerManager } from "./tokenizer/tokenizerManager";
 import { getProviders, getProviderApiKey, storeProviderApiKey, deleteProviderApiKey, rescanProviderModels } from "./providers";
 import { manageProvidersCommand } from "./providerEditor";
-import type { ProviderConfig } from "./types";
+import { prepareLanguageModelChatInformation, resetAutoDiscoveryState } from "./provideModel";
+import { initSessionRouting, resetSessionRouting } from "./sessionRouting";
+import { validateBaseUrl } from "./utils";
 
 export function activate(context: vscode.ExtensionContext) {
     // Initialize logger
     logger.init();
+    logger.info("extension.activate", { version: VersionManager.getVersion() });
 
     // Initialize TokenizerManager with extension path
     TokenizerManager.initialize(context.extensionPath);
 
-    const tokenCountStatusBarItem: vscode.StatusBarItem = initStatusBar(context);
+    const tokenCountStatusBarItem: vscode.StatusBarItem = initStatusBar(context, context.secrets);
     const provider = new MultiLLMChatModelProvider(context.secrets, tokenCountStatusBarItem);
+
+    // Restore the persisted session ID registry (3-day TTL) before any
+    // request can resolve a session ID.
+    initSessionRouting(context.globalState);
 
     // Register the Multi-LLM provider under the vendor id used in package.json
     vscode.lm.registerLanguageModelChatProvider("multiLLM", provider);
@@ -80,6 +89,111 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // ── OpenCode Go plan usage ───────────────────────────────────────
+
+    // Command to check / refresh the OpenCode Go plan usage.
+    // Also bound to clicking the status bar item (see statusBar.ts).
+    context.subscriptions.push(
+        vscode.commands.registerCommand("multiLLM.checkUsage", async () => {
+            const apiKey = await getProviderApiKey("opencode-go", context.secrets);
+            if (!apiKey) {
+                vscode.window.showWarningMessage(l10n("No API key configured. Please run the 'OpenCode Go: Set API Key' command first."));
+                return;
+            }
+            const usage = await refreshGoUsageNow();
+            if (!usage) {
+                if (getUsageFetchStatus() === "unauthorized") {
+                    vscode.window.showErrorMessage(l10n("OpenCode Go usage is unavailable (no active Go plan)."));
+                } else {
+                    vscode.window.showErrorMessage(l10n("Failed to fetch OpenCode Go usage. See output for details."));
+                }
+                return;
+            }
+            vscode.window.showInformationMessage(`OpenCode Go: ${formatUsageSummary(usage)}`);
+        })
+    );
+
+    // ── Session routing ──────────────────────────────────────────────
+
+    // Command to drop all registered session IDs so the next request of every
+    // conversation is routed as a fresh session (escape hatch when session
+    // affinity pins a conversation to a degraded backend).
+    context.subscriptions.push(
+        vscode.commands.registerCommand("multiLLM.resetSessionRouting", () => {
+            const cleared = resetSessionRouting();
+            logger.info("sessionRouting.reset", { cleared });
+            vscode.window.showInformationMessage(
+                l10nFormat("Session routing reset. The next request of each conversation will use a new session ID. ({0} cleared)", cleared)
+            );
+        })
+    );
+
+    // ── Inference base URL override (proxy) ──────────────────────────
+
+    // Command to set a custom inference Base URL (proxy). The compatibility
+    // notice is shown as the QuickPick prompt (wrapped text above the list);
+    // only after explicitly selecting "I Understand" does the Base URL input
+    // box appear.
+    context.subscriptions.push(
+        vscode.commands.registerCommand("multiLLM.setInferenceBaseUrl", async () => {
+            interface BaseUrlNoticeItem extends vscode.QuickPickItem {
+                ack?: boolean;
+            }
+
+            const ackItem: BaseUrlNoticeItem = {
+                label: l10n("I Understand"),
+                ack: true,
+            };
+            const cancelItem: BaseUrlNoticeItem = {
+                label: l10n("Cancel"),
+            };
+
+            const picked = await vscode.window.showQuickPick<BaseUrlNoticeItem>(
+                [ackItem, cancelItem],
+                {
+                    title: l10n("Set Proxy Base URL"),
+                    placeHolder: l10n("Select 'I Understand' to continue, or press Esc to cancel"),
+                    prompt: l10n("This feature is not for connecting to third-party providers — it is for routing requests through a local proxy service. All inference requests (chat and Git commit generation) are sent to this address. The proxy must be fully compatible with the official endpoint: same protocols and paths (/chat/completions, /responses, /v1/messages), same model IDs and headers (Authorization, x-opencode-session). Streaming (SSE) responses must pass through unchanged. Usage and model list requests still use the official endpoint. If you encounter problems after using a proxy, make sure the problem is not caused by the proxy before submitting an issue."),
+                    ignoreFocusOut: true,
+                }
+            );
+            if (!picked?.ack) {
+                return; // user canceled or dismissed the notice
+            }
+
+            const config = vscode.workspace.getConfiguration();
+            const current = config.get<string>("multiLLM.inferenceBaseUrl", "");
+            const input = await vscode.window.showInputBox({
+                title: l10n("Set Proxy Base URL"),
+                prompt: l10n("Enter the proxy base URL (e.g. https://proxy.example.com/zen/go/v1). Leave empty to clear the override and use the official endpoint."),
+                value: current,
+                ignoreFocusOut: true,
+                validateInput: (value: string) => {
+                    const trimmed = value.trim();
+                    if (!trimmed) {
+                        return undefined; // empty input clears the override
+                    }
+                    return validateBaseUrl(trimmed);
+                },
+            });
+            if (input === undefined) {
+                return; // user canceled
+            }
+
+            const trimmed = input.trim();
+            if (!trimmed) {
+                await config.update("multiLLM.inferenceBaseUrl", undefined, vscode.ConfigurationTarget.Global);
+                logger.info("settings.inferenceBaseUrl.cleared", {});
+                vscode.window.showInformationMessage(l10n("Inference base URL override cleared. The official endpoint will be used."));
+                return;
+            }
+
+            await config.update("multiLLM.inferenceBaseUrl", trimmed, vscode.ConfigurationTarget.Global);
+            logger.info("settings.inferenceBaseUrl.set", { baseUrl: trimmed });
+            vscode.window.showInformationMessage(l10nFormat("Inference base URL set to: {0}", trimmed));
+        })
+    );
+
     // ── Rescan models ────────────────────────────────────────────────
 
     context.subscriptions.push(
@@ -123,6 +237,8 @@ export function activate(context: vscode.ExtensionContext) {
                 title: l10n("Rescanning models..."),
                 cancellable: false,
             }, async () => {
+                // Drop every cached model source so the rescan fetches fresh data.
+                resetAutoDiscoveryState();
                 const results = await rescanProviderModels(context.secrets, picked.providerId);
                 const totalModels = results.reduce((sum, r) => sum + r.modelCount, 0);
                 const failures = results.filter((r) => r.error);
@@ -266,6 +382,21 @@ export function activate(context: vscode.ExtensionContext) {
             }
         })
     );
+
+    // Warm up model discovery on every activation (non-blocking, fire-and-forget).
+    // VS Code may fire several activation events at startup; the short refresh
+    // interval in prepareLanguageModelChatInformation dedupes concurrent calls
+    // so the API is not spammed. On failure it degrades silently to the
+    // configured model list.
+    void prepareLanguageModelChatInformation(
+        { silent: true },
+        new vscode.CancellationTokenSource().token,
+        context.secrets
+    ).catch((error) => {
+        logger.error("models.warmup.failed", {
+            error: error instanceof Error ? error.message : String(error),
+        });
+    });
 
     // Dispose logger on deactivate
     context.subscriptions.push({

@@ -1,3 +1,6 @@
+/** Request protocol used by an OpenCode model. */
+export type ApiMode = "openai" | "openai-responses" | "anthropic";
+
 /**
  * Provider configuration from user settings.
  */
@@ -114,15 +117,34 @@ export interface MultiLLMModelItem {
      */
     delay?: number;
     /** API mode (for internal use) */
-    apiMode?: string;
+    apiMode?: ApiMode;
     /** Whether this model supports switching thinking on/off ("switchable"), always has it ("always"), only disabled/adaptive ("adaptive"), or uses reasoning_effort only ("reasoning_effort") */
     thinkingMode?: "switchable" | "always" | "adaptive" | "reasoning_effort";
     /** Whether this model supports setting temperature/top_p. Default true. */
     supportsTemperature?: boolean;
+    /** Whether the catalog declares reasoning support. */
+    supportsReasoning?: boolean;
+    /** Whether the catalog declares an explicit off value for reasoning effort (`none`/`disabled`). Used by the OpenAI Responses adapter to avoid sending `reasoning.effort: "none"` to models that reject it. */
+    supportsDisablingReasoning?: boolean;
     /** Custom HTTP headers */
     headers?: Record<string, string>;
+    /** Cost information for this model */
+    cost?: {
+        cache_read: number;
+        input: number;
+        output: number;
+    };
+    /** Additional fields may be present in provider-specific entries */
+    [key: string]: unknown;
 
 }
+
+/**
+ * Upstream-compatible alias for the resolved model request config.
+ * The multi-provider fork renamed this type to `MultiLLMModelItem`; the
+ * catalog layer (ported from upstream) still refers to it by its original name.
+ */
+export type OpenCodeGoModelItem = MultiLLMModelItem;
 
 /**
  * Response from the models endpoint.
