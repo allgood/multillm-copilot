@@ -374,20 +374,24 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 			rb.top_k = um.top_k;
 		}
 
-		// Add thinking mode (Anthropic-compatible format)
-		// Only send thinking param when model explicitly enables it.
+		// Add thinking mode (Anthropic-compatible format).
+		// Models whose schema rejects the `thinking` field entirely
+		// (supportsThinkingParam=false) must not receive it: thinking is
+		// mandatory there and only controllable through `reasoning_effort`.
 		// Models with thinkingMode "always" (e.g., Kimi, MiniMax M2.5/M2.7) have native
 		// thinking always on and may reject an explicit thinking parameter — skip it.
-		if (um?.enable_thinking === true && um?.thinkingMode !== "always") {
-			if (um?.reasoning_effort === 'adaptive') {
-				rb.thinking = { type: "adaptive" };
-			} else {
-				rb.thinking = { type: "enabled", budget_tokens: 8192 };
+		if (um?.supportsThinkingParam !== false) {
+			if (um?.enable_thinking === true && um?.thinkingMode !== "always") {
+				if (um?.reasoning_effort === 'adaptive') {
+				    rb.thinking = { type: "adaptive" };
+				} else {
+				    rb.thinking = { type: "enabled", budget_tokens: 8192 };
+				}
 			}
 		}
 
 		// Add tools configuration
-		const toolConfig = convertToolsToOpenAI(options, um?.id ?? this._modelId);
+		const toolConfig = convertToolsToOpenAI(options);
 		const anthropicToolList: Array<{ name: string; description?: string; input_schema?: object }> = [];
 		if (toolConfig.tools) {
 			for (const tool of toolConfig.tools) {

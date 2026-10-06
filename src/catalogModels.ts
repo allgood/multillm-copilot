@@ -33,20 +33,20 @@ import {
     type ModelsDevEntry,
 } from "./modelsDev";
 
-/** Supported provider IDs. */
-export type ProviderId = "opencode-go" | "opencode";
+/**
+ * Supported provider IDs. Only OpenCode Go remains: the OpenCode Zen free
+ * tier rejects requests originating outside OpenCode with a 403 FreeTierError.
+ */
+export type ProviderId = "opencode-go";
 
-/** Fallback base URLs used when the catalog is not loaded. */
+/** Fallback base URL used when the catalog is not loaded. */
 const FALLBACK_BASE_URLS: Record<ProviderId, string> = {
     "opencode-go": "https://opencode.ai/zen/go/v1/",
-    "opencode": "https://opencode.ai/zen/v1/",
 };
 
-/** Per-provider display metadata (family grouping, name suffix). */
-const PROVIDER_LABELS: Record<ProviderId, { family: string; detail: string; nameSuffix: string }> = {
-    // implied to be go models, no suffix
-    "opencode-go": { family: "OpenCodeGo", detail: "OpenCode Go", nameSuffix: "" },
-    "opencode": { family: "OpenCode Zen", detail: "OpenCode Zen", nameSuffix: " (Zen)" },
+/** Provider display metadata (family grouping, picker detail text). */
+const PROVIDER_LABELS: Record<ProviderId, { family: string; detail: string }> = {
+    "opencode-go": { family: "OpenCodeGo", detail: "OpenCode Go" },
 };
 
 const DEFAULT_CONTEXT_LENGTH = 128000;
@@ -69,36 +69,13 @@ export interface ModelMeta {
     maxOutputTokens: number;
     apiMode: ApiMode;
     supportsTemperature: boolean;
+    /** Whether the Chat Completions request body may include a top-level `thinking` field. */
+    supportsThinkingParam: boolean;
     toolCalling: boolean;
     baseUrl: string;
     thinkingBudget?: { min?: number; max?: number };
     status?: string;
     cost: { cache_read: number; input: number; output: number };
-}
-
-/**
- * Zen free models that do not follow the "-free" suffix convention but are
- * free on the OpenCode Zen provider (kept in sync with the models.dev
- * catalog; big-pickle is a long-standing free model with a plain ID).
- */
-const ZEN_FREE_EXTRA_IDS: ReadonlySet<string> = new Set(["big-pickle"]);
-
-/**
- * Whether a model ID refers to an OpenCode Zen free model:
- * the "-free" suffix convention, or an ID hard-coded as free (see
- * ZEN_FREE_EXTRA_IDS). Everything else is treated as Go.
- */
-export function isZenFreeModelId(modelId: string): boolean {
-    return modelId.endsWith("-free") || ZEN_FREE_EXTRA_IDS.has(modelId);
-}
-
-/**
- * Resolve the provider for a model ID.
- * Zen free models follow the "-free" suffix convention (plus a small
- * hard-coded set of free models with plain IDs); everything else is Go.
- */
-export function resolveProviderForModelId(modelId: string): ProviderId {
-    return isZenFreeModelId(modelId) ? "opencode" : "opencode-go";
 }
 
 /**
@@ -129,6 +106,7 @@ function resolveFromCatalog(providerId: ProviderId, modelId: string): ModelMeta 
         maxOutputTokens: entry?.limit?.output ?? DEFAULT_MAX_TOKENS,
         apiMode: deduceApiModeFromCatalog(modelId, adapterNpm, entry),
         supportsTemperature: entry?.temperature ?? true,
+        supportsThinkingParam: true,
         toolCalling: entry?.tool_call ?? true,
         baseUrl: getCatalogProviderBaseUrl(providerId, FALLBACK_BASE_URLS[providerId]),
         thinkingBudget: entry ? inferThinkingBudget(entry) : undefined,
@@ -154,6 +132,7 @@ function applyOverride(meta: ModelMeta, override?: ModelMetaOverride): ModelMeta
         maxOutputTokens: override.maxOutputTokens ?? meta.maxOutputTokens,
         apiMode: override.apiMode ?? meta.apiMode,
         supportsTemperature: override.supportsTemperature ?? meta.supportsTemperature,
+        supportsThinkingParam: override.supportsThinkingParam ?? meta.supportsThinkingParam,
         toolCalling: override.toolCalling ?? meta.toolCalling,
         baseUrl: override.baseUrl ?? meta.baseUrl,
         thinkingBudget: override.thinkingBudget ?? meta.thinkingBudget,
@@ -179,13 +158,16 @@ function buildReasoningEnum(meta: ModelMeta): {
     defaultEffort: string;
 } {
     const hasEfforts = meta.supportedReasoningEfforts.length > 0;
-    // A Responses-native model that does not declare an off effort value cannot
-    // accept `reasoning.effort: "none"`; hide the "disabled" option for it so
-    // users do not pick an ineffective off switch. Other protocols disable
-    // thinking via `thinking: { type: "disabled" }` regardless of the effort
-    // list, so they keep the "disabled" option.
+    // A model whose schema rejects the `thinking` field entirely has no off
+    // switch either (e.g. glm-5.3/glm-5.3-flash on OpenCode Go) — hide the
+    // "disabled" option. A Responses-native model that does not declare an off
+    // effort value cannot accept `reasoning.effort: "none"` for the same
+    // reason. Other protocols disable thinking via
+    // `thinking: { type: "disabled" }` regardless of the effort list, so they
+    // keep the "disabled" option.
     const canShowDisabled =
-        meta.apiMode !== "openai-responses" || meta.supportsDisablingReasoning !== false;
+        meta.supportsThinkingParam !== false &&
+        (meta.apiMode !== "openai-responses" || meta.supportsDisablingReasoning !== false);
     let enumValues: string[];
     if (hasEfforts) {
         if (meta.thinkingMode === "switchable") {
@@ -311,15 +293,8 @@ export function buildCatalogModelInfo(providerId: ProviderId, modelId: string): 
     const label = PROVIDER_LABELS[providerId];
     // Deprecated models keep a visible marker when shown (opt-in setting)
     const deprecatedPrefix = meta.status === "deprecated" ? l10n("[Depr] ") : "";
-    // Explicitly mark the provider so models are unambiguous in surfaces that
-    // only show the name (e.g. custom-agent model selection). Zen models are
-    // typically free but may collect data for training, so the marker matters.
-    const nameSuffix = label.nameSuffix;
-    const name = `${deprecatedPrefix}${meta.displayName}${nameSuffix}`;
-    // Surface the free model and implications in the tooltip. 
-    const tooltip = providerId === "opencode"
-        ? l10n("Free models are available on OpenCode for a limited time. Data may be collected for training. See https://opencode.ai/docs/zen for details.")
-        : label.detail;
+    const name = `${deprecatedPrefix}${meta.displayName}`;
+    const tooltip = label.detail;
     const { enumValues, enumItemLabels, enumDescriptions, defaultEffort } = buildReasoningEnum(meta);
 
     return {
@@ -356,11 +331,9 @@ export function buildCatalogModelInfo(providerId: ProviderId, modelId: string): 
 
 /**
  * Build the OpenCodeGoModelItem request config for a model.
- * The provider (Go vs Zen) is resolved from the model ID.
  */
 export function getCatalogModelConfig(modelId: string): OpenCodeGoModelItem {
-    const providerId = resolveProviderForModelId(modelId);
-    const meta = resolveModelMeta(providerId, modelId);
+    const meta = resolveModelMeta("opencode-go", modelId);
     const override = MODEL_OVERRIDES[modelId];
 
     const config: OpenCodeGoModelItem = {
@@ -370,6 +343,7 @@ export function getCatalogModelConfig(modelId: string): OpenCodeGoModelItem {
         baseUrl: meta.baseUrl,
         vision: meta.vision,
         supportsTemperature: meta.supportsTemperature,
+        supportsThinkingParam: meta.supportsThinkingParam,
         context_length: meta.contextLength,
         max_completion_tokens: meta.maxOutputTokens,
         apiMode: meta.apiMode,

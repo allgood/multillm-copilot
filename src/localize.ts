@@ -94,9 +94,6 @@ const zhCN: Record<string, string> = {
     // deprecated model marker (shown when multiLLM.showDeprecatedModels is enabled)
     "[Depr] ": "[已弃用] ",
 
-    // Zen model tooltip warning (free but may collect data for training)
-    "Free models are available on OpenCode for a limited time. Data may be collected for training. See https://opencode.ai/docs/zen for details.": "OpenCode Zen 模型在有限时间内免费使用，可能会收集数据用于训练。详情请参见 https://opencode.ai/docs/zen。",
-
     // vision proxy
     "Querying vision model: \"{0}\"": "正在根据图片提问：{0}",
     "The image you sent was flagged as sensitive by the content moderation system. Please try a different image.": "您发送的图片被内容审核系统判定为敏感，请尝试更换图片。",

@@ -345,7 +345,10 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
             rb.reasoning_effort = um.reasoning_effort;
         }
 
-        // Thinking mode (OpenAI-compatible format: {"thinking": {"type": "enabled"}})
+        // Thinking mode (OpenAI-compatible format: {"thinking": {"type": "enabled"}}).
+        // Routes whose schema rejects the field (supportsThinkingParam=false, e.g.
+        // glm-5.3/glm-5.3-flash on OpenCode Go) must never receive it — thinking
+        // is mandatory there and only controllable through `reasoning_effort`.
         // Only send thinking param when model explicitly enables it.
         // Sending {"type": "disabled"} breaks providers that don't support the thinking
         // parameter at all (e.g., Notreve API). Omit it when disabled.
@@ -353,13 +356,15 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
         // and may reject an explicit thinking parameter — skip it for them.
         // Models with thinkingMode "reasoning_effort" use only the reasoning_effort
         // parameter (standard OpenAI format) and reject the thinking field — skip it.
-        if (um?.enable_thinking === true && um?.thinkingMode !== "always" && um?.thinkingMode !== "reasoning_effort") {
-            if (um?.reasoning_effort === 'adaptive') {
-                rb.thinking = { type: "adaptive" };
-            } else {
-                rb.thinking = { type: "enabled" };
-                if (um?.thinking_budget !== undefined) {
-                    (rb.thinking as Record<string, unknown>).budget_tokens = um.thinking_budget;
+        if (um?.supportsThinkingParam !== false) {
+            if (um?.enable_thinking === true && um?.thinkingMode !== "always" && um?.thinkingMode !== "reasoning_effort") {
+                if (um?.reasoning_effort === 'adaptive') {
+                    rb.thinking = { type: "adaptive" };
+                } else {
+                    rb.thinking = { type: "enabled" };
+                    if (um?.thinking_budget !== undefined) {
+                        (rb.thinking as Record<string, unknown>).budget_tokens = um.thinking_budget;
+                    }
                 }
             }
         }
@@ -388,7 +393,7 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
         }
 
         // tools
-        const toolConfig = convertToolsToOpenAI(options, um?.id ?? this._modelId);
+        const toolConfig = convertToolsToOpenAI(options);
         const toolsList: any[] = [];
         if (toolConfig.tools) {
             toolsList.push(...toolConfig.tools);

@@ -10,7 +10,6 @@ import {
     buildCatalogModelInfo,
     getCatalogModelConfig,
     isModelDeprecated,
-    resolveProviderForModelId,
     type ProviderId,
 } from "./catalogModels";
 
@@ -343,19 +342,19 @@ function buildDynamicModelInfo(
  * providers rely on their static list and/or dynamic endpoint.
  */
 function isCatalogProvider(providerId: string): providerId is ProviderId {
-    return providerId === "opencode-go" || providerId === "opencode";
+    return providerId === "opencode-go";
 }
 
 /**
  * Build the catalog-backed model list for a provider.
  *
- * The catalog is the source of truth for OpenCode Go / OpenCode Zen models, so
+ * The catalog is the source of truth for OpenCode Go models, so
  * models released upstream show up without editing `multiLLM.providers`. When
  * the API model list is reachable it filters the catalog down to what the
  * server actually serves; when it is not, the full catalog list is returned.
  * Deprecated models are hidden unless `multiLLM.showDeprecatedModels` is set.
  *
- * @param providerId The catalog provider ID (`opencode-go` or `opencode`).
+ * @param providerId The catalog provider ID (`opencode-go`).
  * @param apiKey API key used to fetch the server-side model list (optional).
  * @returns Model picker entries, or an empty array when the catalog is unavailable.
  */
@@ -379,11 +378,6 @@ async function buildCatalogModelInfos(
         logger.warn("providers.catalog-empty", { providerId });
         return [];
     }
-
-    // Keep the list consistent with request routing: a "-free" suffixed ID is
-    // routed to Zen at request time, so it must not appear under Go (and vice
-    // versa), otherwise selecting it would hit the wrong endpoint.
-    ids = ids.filter((id) => resolveProviderForModelId(id) === providerId);
 
     // Filter against the server-side list when it is available.
     const apiModelIds = await getApiModelIds(apiKey);
@@ -449,7 +443,7 @@ export async function getAllModelInfos(
             }
         }
 
-        // Catalog models (OpenCode Go / OpenCode Zen). Static definitions win
+        // Catalog models (OpenCode Go). Static definitions win
         // on ID conflict so user overrides in settings are never shadowed.
         if (isCatalogProvider(provider.id)) {
             const apiKey = await getProviderApiKey(provider.id, secrets);

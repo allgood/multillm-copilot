@@ -829,16 +829,18 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     }
                     const systemContent = (params.api as any)._systemContent as string | undefined;
                     if (systemContent) { body.system = systemContent; }
-                    if (params.um?.enable_thinking === true) {
-                        if (params.um?.reasoning_effort === "adaptive") {
-                            body.thinking = { type: "adaptive" };
-                        } else {
-                            body.thinking = { type: "enabled", budget_tokens: 8192 };
+                    if (params.um?.supportsThinkingParam !== false) {
+                        if (params.um?.enable_thinking === true) {
+                            if (params.um?.reasoning_effort === "adaptive") {
+                                body.thinking = { type: "adaptive" };
+                            } else {
+                                body.thinking = { type: "enabled", budget_tokens: 8192 };
+                            }
                         }
                     }
 
                     const anthropicToolList: Array<{ name: string; description?: string; input_schema?: object }> = [];
-                    const toolConfig = convertToolsToOpenAI(params.options, params.um?.id ?? params.model.id);
+                    const toolConfig = convertToolsToOpenAI(params.options);
                     if (toolConfig.tools) {
                         for (const tool of toolConfig.tools) {
                             anthropicToolList.push({
@@ -983,12 +985,14 @@ export class MultiLLMChatModelProvider implements LanguageModelChatProvider {
                     if (params.um?.enable_thinking !== false && params.um?.reasoning_effort !== undefined && params.um.reasoning_effort !== 'adaptive') {
                         body.reasoning_effort = params.um.reasoning_effort;
                     }
-                    if (params.um?.enable_thinking === true && params.um?.thinkingMode !== "always" && params.um?.thinkingMode !== "reasoning_effort") {
-                        body.thinking = { type: "enabled" };
+                    if (params.um?.supportsThinkingParam !== false) {
+                        if (params.um?.enable_thinking === true && params.um?.thinkingMode !== "always" && params.um?.thinkingMode !== "reasoning_effort") {
+                            body.thinking = { type: "enabled" };
+                        }
                     }
 
                     const openaiToolList: any[] = [];
-                    const toolConfig = convertToolsToOpenAI(params.options, params.um?.id ?? params.model.id);
+                    const toolConfig = convertToolsToOpenAI(params.options);
                     if (toolConfig.tools) { openaiToolList.push(...toolConfig.tools); }
                     if (hasLocalImages) {
                         openaiToolList.push(ASK_IMAGE_TOOL_DEF);
